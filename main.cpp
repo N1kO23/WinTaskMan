@@ -17,7 +17,11 @@
 #include <QTextStream>
 #include <QSysInfo>
 #include <QStringList>
+#include <QMap>
 #include <unistd.h>
+
+QMap<int, long> previousCpuTimes;
+QMap<int, long> previousTotalTimes;
 
 int getTotalProcesses()
 {
@@ -37,9 +41,16 @@ int getTotalProcesses()
 }
 void getSystemUsage(int &cpuUsage, int &ramUsage)
 {
-  // Get CPU usage
+  // Get total CPU usage
+  static int prevTotalCpu = 0;
+  static int prevCpuIdle = 0;
+
   QFile cpuFile("/proc/stat");
-  cpuFile.open(QIODevice::ReadOnly | QIODevice::Text);
+  if (!cpuFile.open(QIODevice::ReadOnly | QIODevice::Text))
+  {
+    qDebug() << "Failed to open /proc/stat";
+    return;
+  }
   QTextStream cpuStream(&cpuFile);
   QString cpuLine = cpuStream.readLine();
   cpuFile.close();
@@ -49,8 +60,23 @@ void getSystemUsage(int &cpuUsage, int &ramUsage)
   int cpuNice = cpuValues[2].toInt();
   int cpuSystem = cpuValues[3].toInt();
   int cpuIdle = cpuValues[4].toInt();
-  int totalCpu = cpuUser + cpuNice + cpuSystem + cpuIdle;
-  cpuUsage = totalCpu - cpuIdle;
+  int cpuIowait = cpuValues[5].toInt();
+  int cpuIrq = cpuValues[6].toInt();
+  int cpuSoftirq = cpuValues[7].toInt();
+  int cpuSteal = cpuValues[8].toInt();
+
+  int totalCpu = cpuUser + cpuNice + cpuSystem + cpuIdle + cpuIowait + cpuIrq + cpuSoftirq + cpuSteal;
+
+  if (prevTotalCpu != 0 && prevCpuIdle != 0)
+  {
+    int totalDiff = totalCpu - prevTotalCpu;
+    int idleDiff = cpuIdle - prevCpuIdle;
+
+    cpuUsage = (totalDiff - idleDiff) * 100 / totalDiff;
+  }
+
+  prevTotalCpu = totalCpu;
+  prevCpuIdle = cpuIdle;
 
   // Get RAM usage
   QFile memFile("/proc/meminfo");
@@ -113,7 +139,6 @@ public:
     processesTab->setSortingEnabled(true);
     processesTab->setStyleSheet(R"(
       QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
-      QTreeWidget::item { padding: 1px; border-right: 1px solid lightgray; }
     )");
     tabWidget->addTab(processesTab, "Processes");
 
@@ -125,7 +150,6 @@ public:
     servicesTab->setSortingEnabled(true);
     servicesTab->setStyleSheet(R"(
       QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
-      QTreeWidget::item { padding: 1px; border-right: 1px solid lightgray; }
     )");
     tabWidget->addTab(servicesTab, "Services");
 
@@ -173,6 +197,21 @@ private:
     long pageSizeKb = sysconf(_SC_PAGESIZE) / 1024; // Get page size in kilobytes
     long ticksPerSec = sysconf(_SC_CLK_TCK);        // Get clock ticks per second
 
+    // Read system uptime
+    QFile uptimeFile("/proc/uptime");
+    if (!uptimeFile.open(QIODevice::ReadOnly))
+    {
+      qDebug() << "Failed to open /proc/uptime";
+      return;
+    }
+    QTextStream uptimeStream(&uptimeFile);
+    double uptime;
+    uptimeStream >> uptime;
+    uptimeFile.close();
+
+    // Get the number of CPU cores
+    int numCores = sysconf(_SC_NPROCESSORS_ONLN);
+
     foreach (const QFileInfo &entry, procEntries)
     {
       if (!entry.isDir() || !entry.fileName().toInt())
@@ -201,7 +240,22 @@ private:
       long utime = statParts[13].toLong(); // User mode time
       long stime = statParts[14].toLong(); // Kernel mode time
       long totalCpuTime = utime + stime;
-      double cpuUsage = (double)totalCpuTime / ticksPerSec * 100.0; // CPU usage percentage
+      long starttime = statParts[21].toLong(); // Process start time
+
+      double totalTime = uptime - (double)starttime / ticksPerSec;
+
+      double cpuUsage = 0.0;
+      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid))
+      {
+        long prevCpuTime = previousCpuTimes[pid];
+        double prevTotalTime = previousTotalTimes[pid];
+
+        // Correct the CPU usage calculation
+        cpuUsage = ((double)(totalCpuTime - prevCpuTime) / ticksPerSec) / (totalTime - prevTotalTime) * 100.0 / numCores;
+      }
+
+      previousCpuTimes[pid] = totalCpuTime;
+      previousTotalTimes[pid] = totalTime;
 
       long rss = statParts[23].toLong();           // RSS in pages
       double memUsage = rss * pageSizeKb / 1024.0; // Convert to megabytes
