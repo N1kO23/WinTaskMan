@@ -1,52 +1,125 @@
 #include <QApplication>
-#include <QTreeWidget>
+#include <QMainWindow>
+#include <QTabWidget>
+#include <QMenuBar>
 #include <QVBoxLayout>
+#include <QTreeWidget>
+#include <QTimer>
 #include <QProcess>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QDebug>
-#include <QTimer>
 
-class ServiceViewer : public QWidget
+class TaskManager : public QMainWindow
 {
 public:
-  ServiceViewer(QWidget *parent = nullptr) : QWidget(parent)
+  TaskManager(QWidget *parent = nullptr) : QMainWindow(parent)
   {
-    QVBoxLayout *layout = new QVBoxLayout(this);
-
-    treeWidget = new QTreeWidget(this);
-    treeWidget->setColumnCount(4);
-    treeWidget->setHeaderLabels({"Name", "PID", "Description", "Status"});
-    treeWidget->setSortingEnabled(true); // Enable sorting on columns
-
-    treeWidget->setAlternatingRowColors(false);
-    treeWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    treeWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    treeWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
-    layout->addWidget(treeWidget);
-    setLayout(layout);
     setWindowTitle("Task Manager");
-    resize(800, 400);
 
+    // 🔹 Create menu bar
+    QMenuBar *menuBar = new QMenuBar(this);
+    QMenu *fileMenu = menuBar->addMenu("File");
+    QMenu *optionsMenu = menuBar->addMenu("Options");
+    QMenu *viewMenu = menuBar->addMenu("View");
+    QMenu *helpMenu = menuBar->addMenu("Help");
+
+    setMenuBar(menuBar);
+
+    // 🔹 Create tab widget
+    QTabWidget *tabWidget = new QTabWidget(this);
+
+    // 🔹 Applications Tab (Placeholder)
+    QWidget *applicationsTab = new QWidget(this);
+    tabWidget->addTab(applicationsTab, "Applications");
+
+    // 🔹 Processes Tab
+    processesTab = new QTreeWidget(this);
+    processesTab->setColumnCount(4);
+    processesTab->setHeaderLabels({"Name", "PID", "CPU", "Memory"});
+    processesTab->setRootIsDecorated(false);
+    processesTab->setStyleSheet(R"(
+      QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTreeWidget::item { padding: 1px; }
+  )");
+    tabWidget->addTab(processesTab, "Processes");
+
+    // 🔹 Services Tab
+    servicesTab = new QTreeWidget(this);
+    servicesTab->setColumnCount(4);
+    servicesTab->setHeaderLabels({"Name", "PID", "Description", "Status"});
+    servicesTab->setRootIsDecorated(false);
+    servicesTab->setStyleSheet(R"(
+      QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTreeWidget::item { padding: 1px; }
+  )");
+    tabWidget->addTab(servicesTab, "Services");
+
+    // 🔹 Performance Tab (Placeholder)
+    QWidget *performanceTab = new QWidget(this);
+    tabWidget->addTab(performanceTab, "Performance");
+
+    // 🔹 Networking Tab (Placeholder)
+    QWidget *networkingTab = new QWidget(this);
+    tabWidget->addTab(networkingTab, "Networking");
+
+    // 🔹 Users Tab (Placeholder)
+    QWidget *usersTab = new QWidget(this);
+    tabWidget->addTab(usersTab, "Users");
+
+    tabWidget->setStyleSheet(R"(
+      QTabWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTabWidget::item { padding: 0px; }
+  )");
+
+    setCentralWidget(tabWidget);
+
+    // 🔹 Timer to refresh process & service data
     QTimer *timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &ServiceViewer::loadServices);
-    timer->start(1000); // 1 second interval
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateProcesses);
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateServices);
+    timer->start(1000);
 
-    loadServices();
+    updateProcesses();
+    updateServices();
   }
 
 private:
-  QTreeWidget *treeWidget;
+  QTreeWidget *processesTab;
+  QTreeWidget *servicesTab;
 
-  void loadServices()
+  void updateProcesses()
+  {
+    processesTab->clear();
+    QProcess process;
+    process.start("ps -eo pid,comm,%cpu,%mem --no-headers");
+    process.waitForFinished();
+    QByteArray output = process.readAllStandardOutput();
+    QList<QByteArray> lines = output.split('\n');
+
+    for (const QByteArray &line : lines)
+    {
+      QList<QByteArray> columns = line.simplified().split(' ');
+      if (columns.size() >= 4)
+      {
+        QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
+        item->setText(0, columns[1]);         // Name
+        item->setText(1, columns[0]);         // PID
+        item->setText(2, columns[2] + "%");   // CPU
+        item->setText(3, columns[3] + " MB"); // Memory
+        processesTab->addTopLevelItem(item);
+      }
+    }
+  }
+
+  void updateServices()
   {
 
     QString selectedService;
-    if (treeWidget->currentItem())
+    if (servicesTab->currentItem())
     {
-      selectedService = treeWidget->currentItem()->text(0); // Save service name
+      selectedService = servicesTab->currentItem()->text(0); // Save service name
     }
 
     QProcess process;
@@ -63,7 +136,7 @@ private:
       return;
     }
 
-    treeWidget->clear();                     // clear the old shi
+    servicesTab->clear();                    // clear the old shi
     QTreeWidgetItem *selectedItem = nullptr; // for restoring selection later
 
     QJsonArray services = jsonDoc.array();
@@ -75,7 +148,7 @@ private:
       QString description = service["description"].toString();
       QString activeState = service["active"].toString();
 
-      QTreeWidgetItem *item = new QTreeWidgetItem(treeWidget);
+      QTreeWidgetItem *item = new QTreeWidgetItem(servicesTab);
       item->setText(0, name);
       item->setText(1, pid);
       item->setText(2, description);
@@ -92,7 +165,7 @@ private:
       //   item->setBackground(3, QBrush(QColor(255, 200, 200))); // Light red for inactive
       // }
 
-      treeWidget->addTopLevelItem(item);
+      servicesTab->addTopLevelItem(item);
 
       // Check if this item was selected before refresh
       if (name == selectedService)
@@ -104,24 +177,19 @@ private:
     // restore selection if its there
     if (selectedItem)
     {
-      treeWidget->setCurrentItem(selectedItem);
+      servicesTab->setCurrentItem(selectedItem);
     }
 
     // Resize columns based on content
-    // treeWidget->header()->setSectionResizeMode(true);
-    // treeWidget->header()->setStretchLastSection(true);
-
-    treeWidget->setStyleSheet(R"(
-      QTreeWidget { border: 1px solid gray; background: white; font-size: 12px; }
-      QTreeWidget::item { padding: 1px; }
-  )");
+    // servicesTab->header()->setSectionResizeMode(true);
+    // servicesTab->header()->setStretchLastSection(true);
   }
 };
 
 int main(int argc, char *argv[])
 {
   QApplication app(argc, argv);
-  ServiceViewer viewer;
-  viewer.show();
+  TaskManager taskManager;
+  taskManager.show();
   return app.exec();
 }
