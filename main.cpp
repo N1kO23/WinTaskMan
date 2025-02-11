@@ -1,14 +1,12 @@
 #include <QApplication>
-#include <QWidget>
+#include <QTreeWidget>
 #include <QVBoxLayout>
-#include <QSplitter>
-#include <QScrollBar>
-#include <QListWidget>
 #include <QProcess>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QDebug>
+#include <QTimer>
 
 class ServiceViewer : public QWidget
 {
@@ -17,55 +15,40 @@ public:
   {
     QVBoxLayout *layout = new QVBoxLayout(this);
 
-    QSplitter *splitter = new QSplitter(this);
+    treeWidget = new QTreeWidget(this);
+    treeWidget->setColumnCount(4);
+    treeWidget->setHeaderLabels({"Name", "PID", "Description", "Status"});
+    treeWidget->setSortingEnabled(true); // Enable sorting on columns
 
-    splitter->setHandleWidth(-1);
+    treeWidget->setAlternatingRowColors(false);
+    treeWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    treeWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    treeWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    nameList = new QListWidget();
-    pidList = new QListWidget();
-    descList = new QListWidget();
-    statusList = new QListWidget();
-
-    nameList->setFixedWidth(200);
-    pidList->setFixedWidth(80);
-    descList->setFixedWidth(300);
-    statusList->setFixedWidth(100);
-
-    nameList->verticalScrollBar()->setStyleSheet("QScrollBar {width:0px;}");
-    pidList->verticalScrollBar()->setStyleSheet("QScrollBar {width:0px;}");
-    descList->verticalScrollBar()->setStyleSheet("QScrollBar {width:0px;}");
-
-    nameList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    pidList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    descList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    statusList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-
-    splitter->addWidget(nameList);
-    splitter->addWidget(pidList);
-    splitter->addWidget(descList);
-    splitter->addWidget(statusList);
-
-    layout->addWidget(splitter);
+    layout->addWidget(treeWidget);
     setLayout(layout);
-    setWindowTitle("Systemd User Services");
+    setWindowTitle("Task Manager");
     resize(800, 400);
 
-    loadServices();
+    QTimer *timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &ServiceViewer::loadServices);
+    timer->start(1000); // 1 second interval
 
-    // Synchronize scrolling
-    connect(statusList->verticalScrollBar(), &QScrollBar::valueChanged, pidList->verticalScrollBar(), &QScrollBar::setValue);
-    connect(statusList->verticalScrollBar(), &QScrollBar::valueChanged, descList->verticalScrollBar(), &QScrollBar::setValue);
-    connect(statusList->verticalScrollBar(), &QScrollBar::valueChanged, nameList->verticalScrollBar(), &QScrollBar::setValue);
+    loadServices();
   }
 
 private:
-  QListWidget *nameList;
-  QListWidget *pidList;
-  QListWidget *descList;
-  QListWidget *statusList;
+  QTreeWidget *treeWidget;
 
   void loadServices()
   {
+
+    QString selectedService;
+    if (treeWidget->currentItem())
+    {
+      selectedService = treeWidget->currentItem()->text(0); // Save service name
+    }
+
     QProcess process;
     process.setProgram("systemctl");
     process.setArguments({"--user", "list-units", "--type=service", "--all", "--output=json"});
@@ -80,6 +63,9 @@ private:
       return;
     }
 
+    treeWidget->clear();                     // clear the old shi
+    QTreeWidgetItem *selectedItem = nullptr; // for restoring selection later
+
     QJsonArray services = jsonDoc.array();
     for (const QJsonValue &serviceValue : services)
     {
@@ -89,11 +75,46 @@ private:
       QString description = service["description"].toString();
       QString activeState = service["active"].toString();
 
-      nameList->addItem(name);
-      pidList->addItem(pid);
-      descList->addItem(description);
-      statusList->addItem(activeState);
+      QTreeWidgetItem *item = new QTreeWidgetItem(treeWidget);
+      item->setText(0, name);
+      item->setText(1, pid);
+      item->setText(2, description);
+      item->setText(3, activeState);
+
+      item->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicator); // hide this shi
+      // Color code active/inactive status
+      // if (activeState == "active")
+      // {
+      //   item->setBackground(3, QBrush(QColor(200, 255, 200))); // Light green for active
+      // }
+      // else
+      // {
+      //   item->setBackground(3, QBrush(QColor(255, 200, 200))); // Light red for inactive
+      // }
+
+      treeWidget->addTopLevelItem(item);
+
+      // Check if this item was selected before refresh
+      if (name == selectedService)
+      {
+        selectedItem = item;
+      }
     }
+
+    // restore selection if its there
+    if (selectedItem)
+    {
+      treeWidget->setCurrentItem(selectedItem);
+    }
+
+    // Resize columns based on content
+    // treeWidget->header()->setSectionResizeMode(true);
+    // treeWidget->header()->setStretchLastSection(true);
+
+    treeWidget->setStyleSheet(R"(
+      QTreeWidget { border: 1px solid gray; background: white; font-size: 12px; }
+      QTreeWidget::item { padding: 1px; }
+  )");
   }
 };
 
