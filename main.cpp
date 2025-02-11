@@ -2,6 +2,7 @@
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QMenuBar>
+#include <QStatusBar>
 #include <QVBoxLayout>
 #include <QTreeWidget>
 #include <QTimer>
@@ -10,6 +11,74 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QDebug>
+
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+#include <QSysInfo>
+#include <QStringList>
+#include <unistd.h>
+
+int getTotalProcesses()
+{
+  QDir procDir("/proc");
+  QStringList procEntries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+  int processCount = 0;
+
+  foreach (QString entry, procEntries)
+  {
+    if (entry.toInt())
+    {
+      processCount++;
+    }
+  }
+
+  return processCount;
+}
+void getSystemUsage(int &cpuUsage, int &ramUsage)
+{
+  // Get CPU usage
+  QFile cpuFile("/proc/stat");
+  cpuFile.open(QIODevice::ReadOnly | QIODevice::Text);
+  QTextStream cpuStream(&cpuFile);
+  QString cpuLine = cpuStream.readLine();
+  cpuFile.close();
+
+  QStringList cpuValues = cpuLine.split(" ", Qt::SkipEmptyParts);
+  int cpuUser = cpuValues[1].toInt();
+  int cpuNice = cpuValues[2].toInt();
+  int cpuSystem = cpuValues[3].toInt();
+  int cpuIdle = cpuValues[4].toInt();
+  int totalCpu = cpuUser + cpuNice + cpuSystem + cpuIdle;
+  cpuUsage = totalCpu - cpuIdle;
+
+  // Get RAM usage
+  QFile memFile("/proc/meminfo");
+  memFile.open(QIODevice::ReadOnly | QIODevice::Text);
+  QTextStream memStream(&memFile);
+  QString memTotalLine = memStream.readLine();
+  QString memAvailableLine = memStream.readLine();
+  memFile.close();
+
+  QStringList memTotalValues = memTotalLine.split(" ", Qt::SkipEmptyParts);
+  QStringList memAvailableValues = memAvailableLine.split(" ", Qt::SkipEmptyParts);
+  int memTotal = memTotalValues[1].toInt();
+  int memAvailable = memAvailableValues[1].toInt();
+  ramUsage = memTotal - memAvailable;
+}
+
+void updateStatusBar(QStatusBar *statusBar)
+{
+  int cpuUsage, ramUsage;
+  getSystemUsage(cpuUsage, ramUsage);
+  int totalProcesses = getTotalProcesses();
+
+  QString statusText = QString("Processes: %1 | CPU Usage: %2% | RAM Usage: %3 kB")
+                           .arg(totalProcesses)
+                           .arg(cpuUsage)
+                           .arg(ramUsage);
+  statusBar->showMessage(statusText);
+}
 
 class TaskManager : public QMainWindow
 {
@@ -24,8 +93,10 @@ public:
     QMenu *optionsMenu = menuBar->addMenu("Options");
     QMenu *viewMenu = menuBar->addMenu("View");
     QMenu *helpMenu = menuBar->addMenu("Help");
-
     setMenuBar(menuBar);
+
+    QStatusBar *statusBar = new QStatusBar(this);
+    setStatusBar(statusBar);
 
     // 🔹 Create tab widget
     QTabWidget *tabWidget = new QTabWidget(this);
@@ -39,10 +110,11 @@ public:
     processesTab->setColumnCount(4);
     processesTab->setHeaderLabels({"Name", "PID", "CPU", "Memory"});
     processesTab->setRootIsDecorated(false);
+    processesTab->setSortingEnabled(true);
     processesTab->setStyleSheet(R"(
       QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
-      QTreeWidget::item { padding: 1px; }
-  )");
+      QTreeWidget::item { padding: 1px; border-right: 1px solid lightgray; }
+    )");
     tabWidget->addTab(processesTab, "Processes");
 
     // 🔹 Services Tab
@@ -50,10 +122,11 @@ public:
     servicesTab->setColumnCount(4);
     servicesTab->setHeaderLabels({"Name", "PID", "Description", "Status"});
     servicesTab->setRootIsDecorated(false);
+    servicesTab->setSortingEnabled(true);
     servicesTab->setStyleSheet(R"(
       QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
-      QTreeWidget::item { padding: 1px; }
-  )");
+      QTreeWidget::item { padding: 1px; border-right: 1px solid lightgray; }
+    )");
     tabWidget->addTab(servicesTab, "Services");
 
     // 🔹 Performance Tab (Placeholder)
@@ -70,7 +143,7 @@ public:
 
     tabWidget->setStyleSheet(R"(
       QTabWidget { border: 1px solid gray; background: white; font-size: 11px; }
-      QTabWidget::item { padding: 0px; }
+      QTabWidget::item { padding: 128px; }
   )");
 
     setCentralWidget(tabWidget);
@@ -79,6 +152,8 @@ public:
     QTimer *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateProcesses);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateServices);
+    connect(timer, &QTimer::timeout, [statusBar]()
+            { updateStatusBar(statusBar); });
     timer->start(1000);
 
     updateProcesses();
@@ -92,24 +167,55 @@ private:
   void updateProcesses()
   {
     processesTab->clear();
-    QProcess process;
-    process.start("ps -eo pid,comm,%cpu,%mem --no-headers");
-    process.waitForFinished();
-    QByteArray output = process.readAllStandardOutput();
-    QList<QByteArray> lines = output.split('\n');
+    QDir procDir("/proc");
+    QFileInfoList procEntries = procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
 
-    for (const QByteArray &line : lines)
+    long pageSizeKb = sysconf(_SC_PAGESIZE) / 1024; // Get page size in kilobytes
+    long ticksPerSec = sysconf(_SC_CLK_TCK);        // Get clock ticks per second
+
+    foreach (const QFileInfo &entry, procEntries)
     {
-      QList<QByteArray> columns = line.simplified().split(' ');
-      if (columns.size() >= 4)
-      {
-        QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
-        item->setText(0, columns[1]);         // Name
-        item->setText(1, columns[0]);         // PID
-        item->setText(2, columns[2] + "%");   // CPU
-        item->setText(3, columns[3] + " MB"); // Memory
-        processesTab->addTopLevelItem(item);
-      }
+      if (!entry.isDir() || !entry.fileName().toInt())
+        continue;
+
+      QString pidStr = entry.fileName();
+      int pid = pidStr.toInt();
+      QFile statFile(entry.filePath() + "/stat");
+      QFile cmdlineFile(entry.filePath() + "/cmdline");
+
+      if (!statFile.open(QIODevice::ReadOnly) || !cmdlineFile.open(QIODevice::ReadOnly))
+        continue;
+
+      QTextStream statStream(&statFile);
+      QTextStream cmdlineStream(&cmdlineFile);
+
+      QString stat = statStream.readAll();
+      QString cmdline = cmdlineStream.readAll();
+
+      QStringList statParts = stat.split(" ");
+      if (statParts.size() < 24)
+        continue;
+
+      QString comm = cmdline.split('\0').join(' ');
+
+      long utime = statParts[13].toLong(); // User mode time
+      long stime = statParts[14].toLong(); // Kernel mode time
+      long totalCpuTime = utime + stime;
+      double cpuUsage = (double)totalCpuTime / ticksPerSec * 100.0; // CPU usage percentage
+
+      long rss = statParts[23].toLong();           // RSS in pages
+      double memUsage = rss * pageSizeKb / 1024.0; // Convert to megabytes
+
+      QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
+      item->setText(0, comm);                                                       // Name
+      item->setData(1, Qt::DisplayRole, pid);                                       // PID as integer
+      item->setData(2, Qt::DisplayRole, QString::number(cpuUsage, 'f', 2) + "%");   // CPU Percentage
+      item->setData(3, Qt::DisplayRole, QString::number(memUsage, 'f', 2) + " MB"); // Memory in Megabytes
+
+      item->setData(1, Qt::UserRole, QVariant(pid));      // Store PID as user data
+      item->setData(2, Qt::UserRole, QVariant(cpuUsage)); // Store CPU as user data
+      item->setData(3, Qt::UserRole, QVariant(memUsage)); // Store Memory as user data
+      processesTab->addTopLevelItem(item);
     }
   }
 
@@ -154,17 +260,6 @@ private:
       item->setText(2, description);
       item->setText(3, activeState);
 
-      item->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicator); // hide this shi
-      // Color code active/inactive status
-      // if (activeState == "active")
-      // {
-      //   item->setBackground(3, QBrush(QColor(200, 255, 200))); // Light green for active
-      // }
-      // else
-      // {
-      //   item->setBackground(3, QBrush(QColor(255, 200, 200))); // Light red for inactive
-      // }
-
       servicesTab->addTopLevelItem(item);
 
       // Check if this item was selected before refresh
@@ -179,10 +274,6 @@ private:
     {
       servicesTab->setCurrentItem(selectedItem);
     }
-
-    // Resize columns based on content
-    // servicesTab->header()->setSectionResizeMode(true);
-    // servicesTab->header()->setStretchLastSection(true);
   }
 };
 
