@@ -145,7 +145,7 @@ public:
     processesTab->setRootIsDecorated(false);
     processesTab->setSortingEnabled(true);
     processesTab->setStyleSheet(R"(
-      QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTreeWidget { border: 1px solid gray; font-size: 11px; }
     )");
     tabWidget->addTab(processesTab, "Processes");
 
@@ -156,7 +156,7 @@ public:
     servicesTab->setRootIsDecorated(false);
     servicesTab->setSortingEnabled(true);
     servicesTab->setStyleSheet(R"(
-      QTreeWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTreeWidget { border: 1px solid gray; font-size: 11px; }
     )");
     tabWidget->addTab(servicesTab, "Services");
 
@@ -173,7 +173,7 @@ public:
     tabWidget->addTab(usersTab, "Users");
 
     tabWidget->setStyleSheet(R"(
-      QTabWidget { border: 1px solid gray; background: white; font-size: 11px; }
+      QTabWidget { border: 1px solid gray; font-size: 11px; }
       QTabWidget::item { padding: 128px; }
   )");
 
