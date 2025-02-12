@@ -19,6 +19,7 @@
 #include <QStringList>
 #include <QMap>
 #include <unistd.h>
+#include <pwd.h>
 
 QMap<int, long> previousCpuTimes;
 QMap<int, long> previousTotalTimes;
@@ -106,6 +107,12 @@ void updateStatusBar(QStatusBar *statusBar)
   statusBar->showMessage(statusText);
 }
 
+QString getUserFromUid(uid_t uid)
+{
+  struct passwd *pw = getpwuid(uid);
+  return pw ? QString(pw->pw_name) : QString("unknown");
+}
+
 class TaskManager : public QMainWindow
 {
 public:
@@ -133,8 +140,8 @@ public:
 
     // 🔹 Processes Tab
     processesTab = new QTreeWidget(this);
-    processesTab->setColumnCount(4);
-    processesTab->setHeaderLabels({"Name", "PID", "CPU", "Memory"});
+    processesTab->setColumnCount(5);
+    processesTab->setHeaderLabels({"Name", "PID", "User", "CPU", "Memory"});
     processesTab->setRootIsDecorated(false);
     processesTab->setSortingEnabled(true);
     processesTab->setStyleSheet(R"(
@@ -221,19 +228,28 @@ private:
       int pid = pidStr.toInt();
       QFile statFile(entry.filePath() + "/stat");
       QFile cmdlineFile(entry.filePath() + "/cmdline");
+      QFile statusFile(entry.filePath() + "/status");
 
-      if (!statFile.open(QIODevice::ReadOnly) || !cmdlineFile.open(QIODevice::ReadOnly))
+      if (!statFile.open(QIODevice::ReadOnly) || !cmdlineFile.open(QIODevice::ReadOnly) || !statusFile.open(QIODevice::ReadOnly))
+      {
+        qDebug() << "Failed to open stat, cmdline, or status file for PID" << pid;
         continue;
+      }
 
       QTextStream statStream(&statFile);
       QTextStream cmdlineStream(&cmdlineFile);
+      QTextStream statusStream(&statusFile);
 
       QString stat = statStream.readAll();
       QString cmdline = cmdlineStream.readAll();
+      QString status = statusStream.readAll();
 
       QStringList statParts = stat.split(" ");
       if (statParts.size() < 24)
+      {
+        qDebug() << "Invalid stat file format for PID" << pid;
         continue;
+      }
 
       QString comm = cmdline.split('\0').join(' ');
 
@@ -260,15 +276,48 @@ private:
       long rss = statParts[23].toLong();           // RSS in pages
       double memUsage = rss * pageSizeKb / 1024.0; // Convert to megabytes
 
+      QStringList lines = status.split('\n');
+      uid_t uid;
+      for (const QString &line : lines)
+      {
+        if (line.startsWith("Uid:"))
+        {
+          QString uidLine = line.mid(4).trimmed(); // Remove "Uid:" and trim whitespace
+          int tabIndex = uidLine.indexOf('\t');    // Find the first tab
+          if (tabIndex != -1)
+          {
+            QString uidStr = uidLine.left(tabIndex).trimmed(); // Extract the first UID
+            bool ok;
+            uid = uidStr.toInt(&ok); // Convert to integer
+            if (!ok)
+            {
+              qDebug() << "Error converting UID to int";
+            }
+          }
+          else
+          {
+            bool ok;
+            uid = uidLine.toInt(&ok);
+            if (!ok)
+            {
+              qDebug() << "Error converting UID to int";
+            }
+          }
+          break; // found so stop wasting cycles
+        }
+      }
+      QString user = getUserFromUid(uid);
+
       QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
       item->setText(0, comm);                                                       // Name
       item->setData(1, Qt::DisplayRole, pid);                                       // PID as integer
-      item->setData(2, Qt::DisplayRole, QString::number(cpuUsage, 'f', 2) + "%");   // CPU Percentage
-      item->setData(3, Qt::DisplayRole, QString::number(memUsage, 'f', 2) + " MB"); // Memory in Megabytes
+      item->setText(2, user);                                                       // User
+      item->setData(3, Qt::DisplayRole, QString::number(cpuUsage, 'f', 2) + "%");   // CPU Percentage
+      item->setData(4, Qt::DisplayRole, QString::number(memUsage, 'f', 2) + " MB"); // Memory in Megabytes, broken
 
       item->setData(1, Qt::UserRole, QVariant(pid));      // Store PID as user data
-      item->setData(2, Qt::UserRole, QVariant(cpuUsage)); // Store CPU as user data
-      item->setData(3, Qt::UserRole, QVariant(memUsage)); // Store Memory as user data
+      item->setData(3, Qt::UserRole, QVariant(cpuUsage)); // Store CPU as user data
+      item->setData(4, Qt::UserRole, QVariant(memUsage)); // Store Memory as user data, needs fix
       processesTab->addTopLevelItem(item);
     }
   }
