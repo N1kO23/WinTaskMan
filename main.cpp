@@ -135,7 +135,14 @@ public:
     QTabWidget *tabWidget = new QTabWidget(this);
 
     // 🔹 Applications Tab (Placeholder)
-    QWidget *applicationsTab = new QWidget(this);
+    applicationsTab = new QTreeWidget(this);
+    applicationsTab->setColumnCount(2);
+    applicationsTab->setHeaderLabels({"Task", "Status"});
+    applicationsTab->setRootIsDecorated(false);
+    applicationsTab->setSortingEnabled(true);
+    applicationsTab->setStyleSheet(R"(
+      QTreeWidget { border: 1px solid gray; font-size: 11px; }
+    )");
     tabWidget->addTab(applicationsTab, "Applications");
 
     // 🔹 Processes Tab
@@ -181,19 +188,55 @@ public:
 
     // 🔹 Timer to refresh process & service data
     QTimer *timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateApplications);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateProcesses);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateServices);
     connect(timer, &QTimer::timeout, [statusBar]()
             { updateStatusBar(statusBar); });
     timer->start(1000);
 
+    updateApplications();
     updateProcesses();
     updateServices();
   }
 
 private:
+  QTreeWidget *applicationsTab;
   QTreeWidget *processesTab;
   QTreeWidget *servicesTab;
+
+  void updateApplications()
+  {
+    QProcess process;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    process.setProcessEnvironment(env);
+    process.start("bash", QStringList() << "-c" << R"(
+      if [ "$XDG_SESSION_TYPE" = "x11" ]; then
+          xlsclients | awk '{print $2}' | sort -u
+      elif [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+          x_apps=$(xlsclients 2>/dev/null | awk '{print $2}' | sort -u)
+          w_apps=$(ps -eo pid,comm,args | grep -E 'wayland|Xwayland' | awk '{print $2}' | sort -u)
+          echo -e "$x_apps\n$w_apps" | sort -u
+      else
+          echo "Unknown display server"
+      fi
+      )");
+    process.waitForFinished();
+
+    QString output = process.readAllStandardOutput();
+    QStringList appList = output.split("\n", Qt::SkipEmptyParts);
+
+    applicationsTab->clear(); // Clear previous entries
+
+    for (const QString &app : appList)
+    {
+      QString status = "Running"; // Hardcode this for now
+      QTreeWidgetItem *item = new QTreeWidgetItem(applicationsTab);
+      item->setText(0, app);
+      item->setText(1, status);
+      applicationsTab->addTopLevelItem(item);
+    }
+  }
 
   void updateProcesses()
   {
