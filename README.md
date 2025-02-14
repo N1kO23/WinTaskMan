@@ -6,7 +6,17 @@ A Work-In-Progress program to bring the old-fashioned task manager to linux usin
 
 
 ## Building
-To build the program you need qt6 base. This should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
+To build the program you need cmake, qt6 base and qt6charts. These should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
+
+To install the dependencies on Arch:
+```
+sudo pacman -S cmake qt6-base qt6-charts
+```
+
+To install the dependencies on Ubuntu:
+```
+sudo apt install cmake qt6-base-dev libqt6charts6-dev
+```
 
 ### What works
 - Processes being listed
@@ -17,7 +27,7 @@ To build the program you need qt6 base. This should be available on all rolling 
 
 ### What is missing
 - Network tab contents as a whole
-- Performance tab contents as a whole
+- Performance tab contents mostly missing, only 1 wip graph currently
 - User tab contents as whole
 - Control buttons from all tabs
 - Menubar actions
