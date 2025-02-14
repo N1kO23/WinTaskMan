@@ -33,7 +33,7 @@ void getSystemUsage(int &cpuUsage, int &ramUsage, int &totalRam, int &cpuCoreCou
     while (keepGoing) {
         QString line = cpuStream.readLine();
         if (line.startsWith("cpu")) {
-            bool isCore = line.at(3) != " "; // Check if it's a core line (cpu0, cpu1, etc.)
+            bool isCore = line.at(3) != QChar(' '); // Check if it's a core line (cpu0, cpu1, etc.)
             if (isCore) {
                 cpuCoreCount++;
             }
