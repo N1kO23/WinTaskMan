@@ -1,52 +1,37 @@
 #include <QApplication>
-#include <QMainWindow>
-#include <QTabWidget>
-#include <QMenuBar>
-#include <QStatusBar>
-#include <QVBoxLayout>
-#include <QTreeWidget>
-#include <QTimer>
-#include <QProcess>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMainWindow>
+#include <QMenuBar>
+#include <QProcess>
+#include <QStatusBar>
+#include <QTabWidget>
+#include <QTimer>
+#include <QTreeWidget>
+#include <QVBoxLayout>
 
-#include <QDir>
-#include <QFile>
-#include <QTextStream>
-#include <QSysInfo>
-#include <QStringList>
-#include <QMap>
-#include <QChart>
-#include <QChartView>
-#include <QLineSeries>
-#include <QValueAxis>
-#include <unistd.h>
 #include "fetchfunctions.h"
 #include "helperutils.h"
+#include <QChart>
+#include <QChartView>
+#include <QDir>
+#include <QFile>
+#include <QLineSeries>
+#include <QMap>
+#include <QStringList>
+#include <QSysInfo>
+#include <QTextStream>
+#include <QValueAxis>
+#include <unistd.h>
 
 QMap<int, long> previousCpuTimes;
 QMap<int, long> previousTotalTimes;
 
-void updateStatusBar(QStatusBar *statusBar)
-{
-  int cpuUsage, ramUsage;
-  getSystemUsage(cpuUsage, ramUsage);
-  int totalProcesses = getTotalProcesses();
-
-  QString statusText = QString("Processes: %1 | CPU Usage: %2% | RAM Usage: %3 kB")
-                           .arg(totalProcesses)
-                           .arg(cpuUsage)
-                           .arg(ramUsage);
-  statusBar->showMessage(statusText);
-}
-
-class TaskManager : public QMainWindow
-{
+class TaskManager : public QMainWindow {
 public:
-  TaskManager(QWidget *parent = nullptr) : QMainWindow(parent)
-  {
+  TaskManager(QWidget *parent = nullptr) : QMainWindow(parent) {
     setWindowTitle("Task Manager");
 
     // 🔹 Create menu bar
@@ -57,7 +42,7 @@ public:
     QMenu *helpMenu = menuBar->addMenu("Help");
     setMenuBar(menuBar);
 
-    QStatusBar *statusBar = new QStatusBar(this);
+    statusBar = new QStatusBar(this);
     setStatusBar(statusBar);
 
     // 🔹 Create tab widget
@@ -101,7 +86,30 @@ public:
     performanceChart = new QChart();
     performanceSeries = new QLineSeries();
     performanceChart->addSeries(performanceSeries);
-    performanceChart->createDefaultAxes();
+    performanceChart->legend()->hide();
+
+    // Customize XP style
+    performanceChart->setBackgroundBrush(QBrush(Qt::black));
+    performanceChart->setTitleBrush(QBrush(Qt::white));
+
+    QValueAxis *axisX = new QValueAxis();
+    QValueAxis *axisY = new QValueAxis();
+
+    axisX->setRange(0, 50);
+    axisY->setRange(0, 100);
+
+    axisX->setGridLinePen(QPen(Qt::darkGray));
+    axisY->setGridLinePen(QPen(Qt::darkGray));
+
+    performanceChart->addAxis(axisX, Qt::AlignBottom);
+    performanceChart->addAxis(axisY, Qt::AlignLeft);
+    performanceSeries->attachAxis(axisX);
+    performanceSeries->attachAxis(axisY);
+
+    // Green XP-style line
+    QPen pen(Qt::green);
+    pen.setWidth(2);
+    performanceSeries->setPen(pen);
 
     QChartView *performanceChartView = new QChartView(performanceChart);
     performanceLayout->addWidget(performanceChartView);
@@ -127,14 +135,16 @@ public:
 
     // 🔹 Timer to refresh process & service data
     QTimer *timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateSystemUsage);
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateStatusBar);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateApplications);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateProcesses);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateServices);
-    // connect(timer, &QTimer::timeout, this, &TaskManager::updateGraphs);
-    connect(timer, &QTimer::timeout, [statusBar]()
-            { updateStatusBar(statusBar); });
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateGraphs);
     timer->start(1000);
 
+    updateSystemUsage();
+    updateStatusBar();
     updateApplications();
     updateProcesses();
     updateServices();
@@ -142,34 +152,47 @@ public:
   }
 
 private:
+  QStatusBar *statusBar;
+
   QTreeWidget *applicationsTab;
   QTreeWidget *processesTab;
   QTreeWidget *servicesTab;
 
   QChart *performanceChart;
   QLineSeries *performanceSeries;
+  int cpuUsage = 0, ramUsage = 0, totalProcesses = 0;
 
-  void updateGraphs()
-  {
-    int cpuUsage, ramUsage;
+  void updateSystemUsage() {
     getSystemUsage(cpuUsage, ramUsage);
+    qDebug() << "CPU Usage:" << cpuUsage << "RAM Usage:" << ramUsage;
+    totalProcesses = getTotalProcesses();
+  }
 
-    // Add new data points to the series
-    static int time = 0;
-    performanceSeries->append(time++, (double)cpuUsage);
+  void updateStatusBar() {
+    QString statusText =
+        QString("Processes: %1 | CPU Usage: %2% | RAM Usage: %3 kB")
+            .arg(totalProcesses)
+            .arg(cpuUsage)
+            .arg(ramUsage);
+    statusBar->showMessage(statusText);
+  }
 
-    // Keep the last 60 data points
-    if (performanceSeries->count() > 60)
-    {
-      performanceSeries->remove(0);
+  void updateGraphs() {
+    if (!performanceSeries) {
+      qDebug() << "Error: performanceSeries is NULL!";
+      return;
     }
 
-    // Update the chart to reflect changes
+    static int time = 0;
+    if (performanceSeries->count() >= 60) {
+      performanceSeries->remove(0); // Remove oldest point
+    }
+    performanceSeries->append(60, cpuUsage);
+
     performanceChart->update();
   }
 
-  void updateApplications()
-  {
+  void updateApplications() {
     QProcess process;
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     process.setProcessEnvironment(env);
@@ -191,8 +214,7 @@ private:
 
     applicationsTab->clear(); // Clear previous entries
 
-    for (const QString &app : appList)
-    {
+    for (const QString &app : appList) {
       QString status = "Running"; // Hardcode this for now
       QTreeWidgetItem *item = new QTreeWidgetItem(applicationsTab);
       item->setText(0, app);
@@ -201,19 +223,19 @@ private:
     }
   }
 
-  void updateProcesses()
-  {
+  void updateProcesses() {
     processesTab->clear();
     QDir procDir("/proc");
-    QFileInfoList procEntries = procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    QFileInfoList procEntries =
+        procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
 
-    long pageSizeKb = sysconf(_SC_PAGESIZE) / 1024; // Get page size in kilobytes
-    long ticksPerSec = sysconf(_SC_CLK_TCK);        // Get clock ticks per second
+    long pageSizeKb =
+        sysconf(_SC_PAGESIZE) / 1024;        // Get page size in kilobytes
+    long ticksPerSec = sysconf(_SC_CLK_TCK); // Get clock ticks per second
 
     // Read system uptime
     QFile uptimeFile("/proc/uptime");
-    if (!uptimeFile.open(QIODevice::ReadOnly))
-    {
+    if (!uptimeFile.open(QIODevice::ReadOnly)) {
       qDebug() << "Failed to open /proc/uptime";
       return;
     }
@@ -225,8 +247,7 @@ private:
     // Get the number of CPU cores
     int numCores = sysconf(_SC_NPROCESSORS_ONLN);
 
-    foreach (const QFileInfo &entry, procEntries)
-    {
+    foreach (const QFileInfo &entry, procEntries) {
       if (!entry.isDir() || !entry.fileName().toInt())
         continue;
 
@@ -236,9 +257,11 @@ private:
       QFile cmdlineFile(entry.filePath() + "/cmdline");
       QFile statusFile(entry.filePath() + "/status");
 
-      if (!statFile.open(QIODevice::ReadOnly) || !cmdlineFile.open(QIODevice::ReadOnly) || !statusFile.open(QIODevice::ReadOnly))
-      {
-        qDebug() << "Failed to open stat, cmdline, or status file for PID" << pid;
+      if (!statFile.open(QIODevice::ReadOnly) ||
+          !cmdlineFile.open(QIODevice::ReadOnly) ||
+          !statusFile.open(QIODevice::ReadOnly)) {
+        qDebug() << "Failed to open stat, cmdline, or status file for PID"
+                 << pid;
         continue;
       }
 
@@ -251,8 +274,7 @@ private:
       QString status = statusStream.readAll();
 
       QStringList statParts = stat.split(" ");
-      if (statParts.size() < 24)
-      {
+      if (statParts.size() < 24) {
         qDebug() << "Invalid stat file format for PID" << pid;
         continue;
       }
@@ -267,13 +289,13 @@ private:
       double totalTime = uptime - (double)starttime / ticksPerSec;
 
       double cpuUsage = 0.0;
-      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid))
-      {
+      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid)) {
         long prevCpuTime = previousCpuTimes[pid];
         double prevTotalTime = previousTotalTimes[pid];
 
         // Correct the CPU usage calculation
-        cpuUsage = ((double)(totalCpuTime - prevCpuTime) / ticksPerSec) / (totalTime - prevTotalTime) * 100.0 / numCores;
+        cpuUsage = ((double)(totalCpuTime - prevCpuTime) / ticksPerSec) /
+                   (totalTime - prevTotalTime) * 100.0 / numCores;
       }
 
       previousCpuTimes[pid] = totalCpuTime;
@@ -284,28 +306,23 @@ private:
 
       QStringList lines = status.split('\n');
       uid_t uid;
-      for (const QString &line : lines)
-      {
-        if (line.startsWith("Uid:"))
-        {
-          QString uidLine = line.mid(4).trimmed(); // Remove "Uid:" and trim whitespace
-          int tabIndex = uidLine.indexOf('\t');    // Find the first tab
-          if (tabIndex != -1)
-          {
-            QString uidStr = uidLine.left(tabIndex).trimmed(); // Extract the first UID
+      for (const QString &line : lines) {
+        if (line.startsWith("Uid:")) {
+          QString uidLine =
+              line.mid(4).trimmed(); // Remove "Uid:" and trim whitespace
+          int tabIndex = uidLine.indexOf('\t'); // Find the first tab
+          if (tabIndex != -1) {
+            QString uidStr =
+                uidLine.left(tabIndex).trimmed(); // Extract the first UID
             bool ok;
             uid = uidStr.toInt(&ok); // Convert to integer
-            if (!ok)
-            {
+            if (!ok) {
               qDebug() << "Error converting UID to int";
             }
-          }
-          else
-          {
+          } else {
             bool ok;
             uid = uidLine.toInt(&ok);
-            if (!ok)
-            {
+            if (!ok) {
               qDebug() << "Error converting UID to int";
             }
           }
@@ -315,38 +332,42 @@ private:
       QString user = getUserFromUid(uid);
 
       QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
-      item->setText(0, comm);                                                       // Name
-      item->setData(1, Qt::DisplayRole, pid);                                       // PID as integer
-      item->setText(2, user);                                                       // User
-      item->setData(3, Qt::DisplayRole, QString::number(cpuUsage, 'f', 2) + "%");   // CPU Percentage
-      item->setData(4, Qt::DisplayRole, QString::number(memUsage, 'f', 2) + " MB"); // Memory in Megabytes, broken
+      item->setText(0, comm);                 // Name
+      item->setData(1, Qt::DisplayRole, pid); // PID as integer
+      item->setText(2, user);                 // User
+      item->setData(3, Qt::DisplayRole,
+                    QString::number(cpuUsage, 'f', 2) + "%"); // CPU Percentage
+      item->setData(4, Qt::DisplayRole,
+                    QString::number(memUsage, 'f', 2) +
+                        " MB"); // Memory in Megabytes, broken
 
-      item->setData(1, Qt::UserRole, QVariant(pid));      // Store PID as user data
-      item->setData(3, Qt::UserRole, QVariant(cpuUsage)); // Store CPU as user data
-      item->setData(4, Qt::UserRole, QVariant(memUsage)); // Store Memory as user data, needs fix
+      item->setData(1, Qt::UserRole, QVariant(pid)); // Store PID as user data
+      item->setData(3, Qt::UserRole,
+                    QVariant(cpuUsage)); // Store CPU as user data
+      item->setData(4, Qt::UserRole,
+                    QVariant(memUsage)); // Store Memory as user data, needs fix
       processesTab->addTopLevelItem(item);
     }
   }
 
-  void updateServices()
-  {
+  void updateServices() {
 
     QString selectedService;
-    if (servicesTab->currentItem())
-    {
-      selectedService = servicesTab->currentItem()->text(0); // Save service name
+    if (servicesTab->currentItem()) {
+      selectedService =
+          servicesTab->currentItem()->text(0); // Save service name
     }
 
     QProcess process;
     process.setProgram("systemctl");
-    process.setArguments({"--user", "list-units", "--type=service", "--all", "--output=json"});
+    process.setArguments(
+        {"--user", "list-units", "--type=service", "--all", "--output=json"});
     process.start();
     process.waitForFinished();
 
     QByteArray output = process.readAllStandardOutput();
     QJsonDocument jsonDoc = QJsonDocument::fromJson(output);
-    if (!jsonDoc.isArray())
-    {
+    if (!jsonDoc.isArray()) {
       qWarning() << "Failed to parse JSON!";
       return;
     }
@@ -355,11 +376,12 @@ private:
     QTreeWidgetItem *selectedItem = nullptr; // for restoring selection later
 
     QJsonArray services = jsonDoc.array();
-    for (const QJsonValue &serviceValue : services)
-    {
+    for (const QJsonValue &serviceValue : services) {
       QJsonObject service = serviceValue.toObject();
       QString name = service["unit"].toString();
-      QString pid = service.contains("mainPID") ? QString::number(service["mainPID"].toInt()) : "-";
+      QString pid = service.contains("mainPID")
+                        ? QString::number(service["mainPID"].toInt())
+                        : "-";
       QString description = service["description"].toString();
       QString activeState = service["active"].toString();
 
@@ -372,22 +394,19 @@ private:
       servicesTab->addTopLevelItem(item);
 
       // Check if this item was selected before refresh
-      if (name == selectedService)
-      {
+      if (name == selectedService) {
         selectedItem = item;
       }
     }
 
     // restore selection if its there
-    if (selectedItem)
-    {
+    if (selectedItem) {
       servicesTab->setCurrentItem(selectedItem);
     }
   }
 };
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   TaskManager taskManager;
   taskManager.show();
