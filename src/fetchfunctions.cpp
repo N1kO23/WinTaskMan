@@ -19,57 +19,95 @@ int getTotalProcesses()
 
   return processCount;
 }
-void getSystemUsage(int &cpuUsage, int &ramUsage, int &totalRam)
+
+void getSystemUsage(int &cpuUsage, int &ramUsage, int &totalRam, int &cpuCoreCount, QList<int> &coreUsages)
 {
-  // Get total CPU usage
-  static int prevTotalCpu = 0;
-  static int prevCpuIdle = 0;
+    cpuCoreCount = 0;
+    QFile cpuFile("/proc/stat");
+    if (!cpuFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+    QTextStream cpuStream(&cpuFile);
+    QStringList cpuLines;
+    bool keepGoing = true;
+    while (keepGoing) {
+        QString line = cpuStream.readLine();
+        if (line.startsWith("cpu")) {
+            bool isCore = line.at(3) != " "; // Check if it's a core line (cpu0, cpu1, etc.)
+            if (isCore) {
+                cpuCoreCount++;
+            }
+            cpuLines.append(line);
+        } else {
+          keepGoing = false;
+        }
+    }
+    cpuFile.close();
 
-  QFile cpuFile("/proc/stat");
-  if (!cpuFile.open(QIODevice::ReadOnly | QIODevice::Text))
-  {
-    // qDebug() << "Failed to open /proc/stat";
-    return;
-  }
-  QTextStream cpuStream(&cpuFile);
-  QString cpuLine = cpuStream.readLine();
-  cpuFile.close();
+    // Get total CPU and per-core usage
+    static QList<int> prevTotalCpu;
+    static QList<int> prevCpuIdle;
 
-  QStringList cpuValues = cpuLine.split(" ", Qt::SkipEmptyParts);
-  int cpuUser = cpuValues[1].toInt();
-  int cpuNice = cpuValues[2].toInt();
-  int cpuSystem = cpuValues[3].toInt();
-  int cpuIdle = cpuValues[4].toInt();
-  int cpuIowait = cpuValues[5].toInt();
-  int cpuIrq = cpuValues[6].toInt();
-  int cpuSoftirq = cpuValues[7].toInt();
-  int cpuSteal = cpuValues[8].toInt();
+    int totalCpuUsage = 0;
+    coreUsages.clear();
+    if (prevTotalCpu.isEmpty()) {
+        prevTotalCpu.fill(0, cpuLines.size());
+        prevCpuIdle.fill(0, cpuLines.size());
+    }
+    
+    for (int i = 0; i < cpuLines.size(); ++i) {
+        if (!cpuLines[i].startsWith("cpu")) {
+            break;
+        }
+        
+        QStringList cpuValues = cpuLines[i].split(" ", Qt::SkipEmptyParts);
+        if (cpuValues.size() < 9) continue;
+        
+        int cpuUser = cpuValues[1].toInt();
+        int cpuNice = cpuValues[2].toInt();
+        int cpuSystem = cpuValues[3].toInt();
+        int cpuIdle = cpuValues[4].toInt();
+        int cpuIowait = cpuValues[5].toInt();
+        int cpuIrq = cpuValues[6].toInt();
+        int cpuSoftirq = cpuValues[7].toInt();
+        int cpuSteal = cpuValues[8].toInt();
+        
+        int totalCpu = cpuUser + cpuNice + cpuSystem + cpuIdle + cpuIowait + cpuIrq + cpuSoftirq + cpuSteal;
+        
+        if (prevTotalCpu[i] != 0 && prevCpuIdle[i] != 0) {
+            int totalDiff = totalCpu - prevTotalCpu[i];
+            int idleDiff = cpuIdle - prevCpuIdle[i];
+            int usage = (totalDiff - idleDiff) * 100 / totalDiff;
+            
+            if (i == 0) { // First line represents total CPU usage
+                totalCpuUsage = usage;
+            } else {
+              coreUsages.append(usage);
+            }
+        } else if (i != 0) {
+            coreUsages.append(0);
+        }
 
-  int totalCpu = cpuUser + cpuNice + cpuSystem + cpuIdle + cpuIowait + cpuIrq + cpuSoftirq + cpuSteal;
+        prevTotalCpu[i] = totalCpu;
+        prevCpuIdle[i] = cpuIdle;
+    }
 
-  if (prevTotalCpu != 0 && prevCpuIdle != 0)
-  {
-    int totalDiff = totalCpu - prevTotalCpu;
-    int idleDiff = cpuIdle - prevCpuIdle;
+    cpuUsage = totalCpuUsage;
 
-    cpuUsage = (totalDiff - idleDiff) * 100 / totalDiff;
-  }
+    // Get RAM usage
+    QFile memFile("/proc/meminfo");
+    if (!memFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+    QTextStream memStream(&memFile);
+    QString memTotalLine = memStream.readLine();
+    QString memAvailableLine = memStream.readLine();
+    memFile.close();
 
-  prevTotalCpu = totalCpu;
-  prevCpuIdle = cpuIdle;
-
-  // Get RAM usage
-  QFile memFile("/proc/meminfo");
-  memFile.open(QIODevice::ReadOnly | QIODevice::Text);
-  QTextStream memStream(&memFile);
-  QString memTotalLine = memStream.readLine();
-  QString memAvailableLine = memStream.readLine();
-  memFile.close();
-
-  QStringList memTotalValues = memTotalLine.split(" ", Qt::SkipEmptyParts);
-  QStringList memAvailableValues = memAvailableLine.split(" ", Qt::SkipEmptyParts);
-  int memTotal = memTotalValues[1].toInt();
-  int memAvailable = memAvailableValues[1].toInt();
-  ramUsage = memTotal - memAvailable;
-  totalRam = memTotal;
+    QStringList memTotalValues = memTotalLine.split(" ", Qt::SkipEmptyParts);
+    QStringList memAvailableValues = memAvailableLine.split(" ", Qt::SkipEmptyParts);
+    int memTotal = memTotalValues[1].toInt();
+    int memAvailable = memAvailableValues[1].toInt();
+    ramUsage = memTotal - memAvailable;
+    totalRam = memTotal;
 }

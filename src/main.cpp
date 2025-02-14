@@ -33,6 +33,8 @@ class TaskManager : public QMainWindow {
 public:
   TaskManager(QWidget *parent = nullptr) : QMainWindow(parent) {
     setWindowTitle("Task Manager");
+    
+    updateSystemUsage();
 
     // 🔹 Create menu bar
     QMenuBar *menuBar = new QMenuBar(this);
@@ -164,11 +166,12 @@ private:
 
   QChart *performanceChart;
   QLineSeries *performanceSeries;
-  int cpuUsage = 0, ramUsage = 0, totalRam = 0, totalProcesses = 0;
+  QList<int> coreUsages;
+  int coreCount = 0, cpuUsage = 0, ramUsage = 0, totalRam = 0, totalProcesses = 0;
 
   void updateSystemUsage() {
-    getSystemUsage(cpuUsage, ramUsage, totalRam);
-    qDebug() << "CPU Usage:" << cpuUsage << "RAM Usage:" << ramUsage;
+    getSystemUsage(cpuUsage, ramUsage, totalRam, coreCount, coreUsages);
+    qDebug() << "CPU Core usages:" << coreUsages << "Total CPU Usage:" << cpuUsage << "RAM Usage:" << ramUsage << "Total RAM:" << totalRam;
     totalProcesses = getTotalProcesses();
   }
 
