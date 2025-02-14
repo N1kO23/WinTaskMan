@@ -19,7 +19,7 @@ int getTotalProcesses()
 
   return processCount;
 }
-void getSystemUsage(int &cpuUsage, int &ramUsage)
+void getSystemUsage(int &cpuUsage, int &ramUsage, int &totalRam)
 {
   // Get total CPU usage
   static int prevTotalCpu = 0;
@@ -71,4 +71,5 @@ void getSystemUsage(int &cpuUsage, int &ramUsage)
   int memTotal = memTotalValues[1].toInt();
   int memAvailable = memAvailableValues[1].toInt();
   ramUsage = memTotal - memAvailable;
+  totalRam = memTotal;
 }

@@ -91,15 +91,19 @@ public:
     // Customize XP style
     performanceChart->setBackgroundBrush(QBrush(Qt::black));
     performanceChart->setTitleBrush(QBrush(Qt::white));
+    performanceChart->setPlotAreaBackgroundVisible(true);
+    performanceChart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
+    performanceSeries->setColor(Qt::green);
+
 
     QValueAxis *axisX = new QValueAxis();
     QValueAxis *axisY = new QValueAxis();
 
-    axisX->setRange(0, 50);
+    axisX->setRange(0, 60);
     axisY->setRange(0, 100);
 
-    axisX->setGridLinePen(QPen(Qt::darkGray));
-    axisY->setGridLinePen(QPen(Qt::darkGray));
+    axisX->setGridLinePen(QPen(Qt::darkGreen));
+    axisY->setGridLinePen(QPen(Qt::darkGreen));
 
     performanceChart->addAxis(axisX, Qt::AlignBottom);
     performanceChart->addAxis(axisY, Qt::AlignLeft);
@@ -160,10 +164,10 @@ private:
 
   QChart *performanceChart;
   QLineSeries *performanceSeries;
-  int cpuUsage = 0, ramUsage = 0, totalProcesses = 0;
+  int cpuUsage = 0, ramUsage = 0, totalRam = 0, totalProcesses = 0;
 
   void updateSystemUsage() {
-    getSystemUsage(cpuUsage, ramUsage);
+    getSystemUsage(cpuUsage, ramUsage, totalRam);
     qDebug() << "CPU Usage:" << cpuUsage << "RAM Usage:" << ramUsage;
     totalProcesses = getTotalProcesses();
   }
@@ -179,18 +183,24 @@ private:
 
   void updateGraphs() {
     if (!performanceSeries) {
-      qDebug() << "Error: performanceSeries is NULL!";
-      return;
+        qDebug() << "Error: performanceSeries is NULL!";
+        return;
     }
 
-    static int time = 0;
-    if (performanceSeries->count() >= 60) {
-      performanceSeries->remove(0); // Remove oldest point
+    // Shift all points left
+    for (int i = 0; i < performanceSeries->count(); i++) {
+        QPointF point = performanceSeries->at(i);
+        performanceSeries->replace(i, QPointF(point.x() - 1, point.y()));
     }
-    performanceSeries->append(60, cpuUsage);
+
+    if (performanceSeries->count() >= 60) {
+        performanceSeries->remove(0);
+    }
+
+    performanceSeries->append(59, cpuUsage);
 
     performanceChart->update();
-  }
+}
 
   void updateApplications() {
     QProcess process;

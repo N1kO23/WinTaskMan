@@ -1,2 +1,2 @@
 int getTotalProcesses();
-void getSystemUsage(int &cpuUsage, int &ramUsage);
+void getSystemUsage(int &cpuUsage, int &ramUsage, int &totalRam);
