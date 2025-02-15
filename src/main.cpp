@@ -29,11 +29,13 @@
 QMap<int, long> previousCpuTimes;
 QMap<int, long> previousTotalTimes;
 
-class TaskManager : public QMainWindow {
+class TaskManager : public QMainWindow
+{
 public:
-  TaskManager(QWidget *parent = nullptr) : QMainWindow(parent) {
+  TaskManager(QWidget *parent = nullptr) : QMainWindow(parent)
+  {
     setWindowTitle("Task Manager");
-    
+
     updateSystemUsage();
 
     // 🔹 Create menu bar
@@ -96,7 +98,6 @@ public:
     performanceChart->setPlotAreaBackgroundVisible(true);
     performanceChart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
     performanceSeries->setColor(Qt::green);
-
 
     QValueAxis *axisX = new QValueAxis();
     QValueAxis *axisY = new QValueAxis();
@@ -169,43 +170,50 @@ private:
   QList<int> coreUsages;
   int coreCount = 0, cpuUsage = 0, ramUsage = 0, totalRam = 0, totalProcesses = 0;
 
-  void updateSystemUsage() {
+  void updateSystemUsage()
+  {
     getSystemUsage(cpuUsage, ramUsage, totalRam, coreCount, coreUsages);
     qDebug() << "CPU Core usages:" << coreUsages << "Total CPU Usage:" << cpuUsage << "RAM Usage:" << ramUsage << "Total RAM:" << totalRam;
     totalProcesses = getTotalProcesses();
   }
 
-  void updateStatusBar() {
+  void updateStatusBar()
+  {
     QString statusText =
         QString("Processes: %1 | CPU Usage: %2% | RAM Usage: %3 kB")
             .arg(totalProcesses)
             .arg(cpuUsage)
-            .arg(ramUsage);
+            .arg(ramUsage / 1024);
     statusBar->showMessage(statusText);
   }
 
-  void updateGraphs() {
-    if (!performanceSeries) {
-        qDebug() << "Error: performanceSeries is NULL!";
-        return;
+  void updateGraphs()
+  {
+    if (!performanceSeries)
+    {
+      qDebug() << "Error: performanceSeries is NULL!";
+      return;
     }
 
     // Shift all points left
-    for (int i = 0; i < performanceSeries->count(); i++) {
-        QPointF point = performanceSeries->at(i);
-        performanceSeries->replace(i, QPointF(point.x() - 1, point.y()));
+    for (int i = 0; i < performanceSeries->count(); i++)
+    {
+      QPointF point = performanceSeries->at(i);
+      performanceSeries->replace(i, QPointF(point.x() - 1, point.y()));
     }
 
-    if (performanceSeries->count() >= 60) {
-        performanceSeries->remove(0);
+    if (performanceSeries->count() >= 60)
+    {
+      performanceSeries->remove(0);
     }
 
-    performanceSeries->append(59, cpuUsage);
+    performanceSeries->append(60, cpuUsage);
 
     performanceChart->update();
-}
+  }
 
-  void updateApplications() {
+  void updateApplications()
+  {
     QProcess process;
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     process.setProcessEnvironment(env);
@@ -227,7 +235,8 @@ private:
 
     applicationsTab->clear(); // Clear previous entries
 
-    for (const QString &app : appList) {
+    for (const QString &app : appList)
+    {
       QString status = "Running"; // Hardcode this for now
       QTreeWidgetItem *item = new QTreeWidgetItem(applicationsTab);
       item->setText(0, app);
@@ -236,7 +245,8 @@ private:
     }
   }
 
-  void updateProcesses() {
+  void updateProcesses()
+  {
     processesTab->clear();
     QDir procDir("/proc");
     QFileInfoList procEntries =
@@ -248,7 +258,8 @@ private:
 
     // Read system uptime
     QFile uptimeFile("/proc/uptime");
-    if (!uptimeFile.open(QIODevice::ReadOnly)) {
+    if (!uptimeFile.open(QIODevice::ReadOnly))
+    {
       qDebug() << "Failed to open /proc/uptime";
       return;
     }
@@ -260,7 +271,8 @@ private:
     // Get the number of CPU cores
     int numCores = sysconf(_SC_NPROCESSORS_ONLN);
 
-    foreach (const QFileInfo &entry, procEntries) {
+    foreach (const QFileInfo &entry, procEntries)
+    {
       if (!entry.isDir() || !entry.fileName().toInt())
         continue;
 
@@ -272,7 +284,8 @@ private:
 
       if (!statFile.open(QIODevice::ReadOnly) ||
           !cmdlineFile.open(QIODevice::ReadOnly) ||
-          !statusFile.open(QIODevice::ReadOnly)) {
+          !statusFile.open(QIODevice::ReadOnly))
+      {
         qDebug() << "Failed to open stat, cmdline, or status file for PID"
                  << pid;
         continue;
@@ -287,7 +300,8 @@ private:
       QString status = statusStream.readAll();
 
       QStringList statParts = stat.split(" ");
-      if (statParts.size() < 24) {
+      if (statParts.size() < 24)
+      {
         qDebug() << "Invalid stat file format for PID" << pid;
         continue;
       }
@@ -302,7 +316,8 @@ private:
       double totalTime = uptime - (double)starttime / ticksPerSec;
 
       double cpuUsage = 0.0;
-      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid)) {
+      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid))
+      {
         long prevCpuTime = previousCpuTimes[pid];
         double prevTotalTime = previousTotalTimes[pid];
 
@@ -319,23 +334,30 @@ private:
 
       QStringList lines = status.split('\n');
       uid_t uid;
-      for (const QString &line : lines) {
-        if (line.startsWith("Uid:")) {
+      for (const QString &line : lines)
+      {
+        if (line.startsWith("Uid:"))
+        {
           QString uidLine =
-              line.mid(4).trimmed(); // Remove "Uid:" and trim whitespace
+              line.mid(4).trimmed();            // Remove "Uid:" and trim whitespace
           int tabIndex = uidLine.indexOf('\t'); // Find the first tab
-          if (tabIndex != -1) {
+          if (tabIndex != -1)
+          {
             QString uidStr =
                 uidLine.left(tabIndex).trimmed(); // Extract the first UID
             bool ok;
             uid = uidStr.toInt(&ok); // Convert to integer
-            if (!ok) {
+            if (!ok)
+            {
               qDebug() << "Error converting UID to int";
             }
-          } else {
+          }
+          else
+          {
             bool ok;
             uid = uidLine.toInt(&ok);
-            if (!ok) {
+            if (!ok)
+            {
               qDebug() << "Error converting UID to int";
             }
           }
@@ -363,10 +385,12 @@ private:
     }
   }
 
-  void updateServices() {
+  void updateServices()
+  {
 
     QString selectedService;
-    if (servicesTab->currentItem()) {
+    if (servicesTab->currentItem())
+    {
       selectedService =
           servicesTab->currentItem()->text(0); // Save service name
     }
@@ -380,7 +404,8 @@ private:
 
     QByteArray output = process.readAllStandardOutput();
     QJsonDocument jsonDoc = QJsonDocument::fromJson(output);
-    if (!jsonDoc.isArray()) {
+    if (!jsonDoc.isArray())
+    {
       qWarning() << "Failed to parse JSON!";
       return;
     }
@@ -389,7 +414,8 @@ private:
     QTreeWidgetItem *selectedItem = nullptr; // for restoring selection later
 
     QJsonArray services = jsonDoc.array();
-    for (const QJsonValue &serviceValue : services) {
+    for (const QJsonValue &serviceValue : services)
+    {
       QJsonObject service = serviceValue.toObject();
       QString name = service["unit"].toString();
       QString pid = service.contains("mainPID")
@@ -407,19 +433,22 @@ private:
       servicesTab->addTopLevelItem(item);
 
       // Check if this item was selected before refresh
-      if (name == selectedService) {
+      if (name == selectedService)
+      {
         selectedItem = item;
       }
     }
 
     // restore selection if its there
-    if (selectedItem) {
+    if (selectedItem)
+    {
       servicesTab->setCurrentItem(selectedItem);
     }
   }
 };
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   QApplication app(argc, argv);
   TaskManager taskManager;
   taskManager.show();
