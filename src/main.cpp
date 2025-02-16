@@ -35,6 +35,10 @@
 QMap<int, long> previousCpuTimes;
 QMap<int, long> previousTotalTimes;
 
+QMap<QString, QTreeWidgetItem *> appToItemMap;
+QMap<int, QTreeWidgetItem *> pidToItemMap;
+QMap<QString, QTreeWidgetItem *> serviceNameToItemMap;
+
 class TaskManager : public QMainWindow
 {
 public:
@@ -270,43 +274,72 @@ private:
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     process.setProcessEnvironment(env);
     process.start("bash", QStringList() << "-c" << R"(
-      if [ "$XDG_SESSION_TYPE" = "x11" ]; then
-          xlsclients | awk '{print $2}' | sort -u
-      elif [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-          x_apps=$(xlsclients 2>/dev/null | awk '{print $2}' | sort -u)
-          w_apps=$(ps -eo pid,comm,args | grep -E 'wayland|Xwayland' | awk '{print $2}' | sort -u)
-          echo -e "$x_apps\n$w_apps" | sort -u
-      else
-          echo "Unknown display server"
-      fi
+          if [ "$XDG_SESSION_TYPE" = "x11" ]; then
+              xlsclients | awk '{print $2}' | sort -u
+          elif [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+              x_apps=$(xlsclients 2>/dev/null | awk '{print $2}' | sort -u)
+              w_apps=$(ps -eo pid,comm,args | grep -E 'wayland|Xwayland' | awk '{print $2}' | sort -u)
+              echo -e "$x_apps\n$w_apps" | sort -u
+          else
+              echo "Unknown display server"
+          fi
       )");
     process.waitForFinished();
 
     QString output = process.readAllStandardOutput();
     QStringList appList = output.split("\n", Qt::SkipEmptyParts);
 
-    applicationsTab->clear(); // Clear previous entries
+    // Mark all items as unused
+    for (auto it = appToItemMap.begin(); it != appToItemMap.end(); ++it)
+    {
+      it.value()->setData(0, Qt::UserRole, false);
+    }
 
     for (const QString &app : appList)
     {
       QString status = "Running"; // Hardcode this for now
-      QTreeWidgetItem *item = new QTreeWidgetItem(applicationsTab);
+
+      QTreeWidgetItem *item;
+      if (appToItemMap.contains(app))
+      {
+        // Update existing item
+        item = appToItemMap[app];
+      }
+      else
+      {
+        // Create new item
+        item = new QTreeWidgetItem(applicationsTab);
+        appToItemMap[app] = item;
+        applicationsTab->addTopLevelItem(item);
+      }
+
       item->setText(0, app);
       item->setText(1, status);
-      applicationsTab->addTopLevelItem(item);
+      item->setData(0, Qt::UserRole, true); // Mark as used
+    }
+
+    // Remove leftover items
+    for (auto it = appToItemMap.begin(); it != appToItemMap.end();)
+    {
+      if (!it.value()->data(0, Qt::UserRole).toBool())
+      {
+        delete it.value();
+        it = appToItemMap.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
     }
   }
 
   void updateProcesses()
   {
-    processesTab->clear();
     QDir procDir("/proc");
-    QFileInfoList procEntries =
-        procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    QFileInfoList procEntries = procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
 
-    long pageSizeKb =
-        sysconf(_SC_PAGESIZE) / 1024;        // Get page size in kilobytes
-    long ticksPerSec = sysconf(_SC_CLK_TCK); // Get clock ticks per second
+    long pageSizeKb = sysconf(_SC_PAGESIZE) / 1024; // Get page size in kilobytes
+    long ticksPerSec = sysconf(_SC_CLK_TCK);        // Get clock ticks per second
 
     // Read system uptime
     QFile uptimeFile("/proc/uptime");
@@ -323,6 +356,12 @@ private:
     // Get the number of CPU cores
     int numCores = sysconf(_SC_NPROCESSORS_ONLN);
 
+    // Mark all items as unused
+    for (auto it = pidToItemMap.begin(); it != pidToItemMap.end(); ++it)
+    {
+      it.value()->setData(0, Qt::UserRole, false);
+    }
+
     foreach (const QFileInfo &entry, procEntries)
     {
       if (!entry.isDir() || !entry.fileName().toInt())
@@ -338,8 +377,7 @@ private:
           !cmdlineFile.open(QIODevice::ReadOnly) ||
           !statusFile.open(QIODevice::ReadOnly))
       {
-        qDebug() << "Failed to open stat, cmdline, or status file for PID"
-                 << pid;
+        qDebug() << "Failed to open stat, cmdline, or status file for PID" << pid;
         continue;
       }
 
@@ -420,45 +458,62 @@ private:
 
       if (showAllProcesses || user == currentUser)
       {
-        QTreeWidgetItem *item = new QTreeWidgetItem(processesTab);
-        item->setText(0, comm);                 // Name
-        item->setData(1, Qt::DisplayRole, pid); // PID as integer
-        item->setText(2, user);                 // User
+        QTreeWidgetItem *item;
+        if (pidToItemMap.contains(pid))
+        {
+          // Update existing item
+          item = pidToItemMap[pid];
+        }
+        else
+        {
+          // Create new item
+          item = new QTreeWidgetItem(processesTab);
+          pidToItemMap[pid] = item;
+          processesTab->addTopLevelItem(item);
+        }
 
-        int cpuUsageInt = static_cast<int>(cpuUsage);                              // Convert to integer
-        item->setText(3, QString::number(cpuUsageInt, 10).rightJustified(2, '0')); // CPU Usage
+        item->setText(0, comm);                        // Name
+        item->setData(1, Qt::DisplayRole, pid);        // PID as integer
+        item->setData(1, Qt::UserRole, QVariant(pid)); // Store PID as number for sorting
+        item->setText(2, user);                        // User
+
+        // Format CPU usage as 2 whole digits
+        int cpuUsageInt = static_cast<int>(cpuUsage);                                               // Convert to integer
+        item->setData(3, Qt::DisplayRole, QString::number(cpuUsageInt, 10).rightJustified(2, '0')); // CPU Usage
+        item->setData(3, Qt::UserRole, cpuUsage);                                                   // Store CPU as double for sorting
         item->setTextAlignment(3, Qt::AlignCenter);
 
         // Format memory usage with commas
         QLocale locale = QLocale::system();
         QString formattedMemory = locale.toString(memUsage);
-        item->setText(4, formattedMemory + " K"); // Memory in kilobytes, broken
+        item->setData(4, Qt::DisplayRole, formattedMemory + " K"); // Memory in kilobytes
+        item->setData(4, Qt::UserRole, memUsage);                  // Store memory as double for sorting
         item->setTextAlignment(4, Qt::AlignRight);
 
-        item->setData(1, Qt::UserRole, QVariant(pid)); // Store PID as user data
-        item->setData(3, Qt::UserRole,
-                      QVariant(cpuUsage)); // Store CPU as user data
-        item->setData(4, Qt::UserRole,
-                      QVariant(memUsage)); // Store Memory as user data, needs fix
-        processesTab->addTopLevelItem(item);
+        item->setData(0, Qt::UserRole, true); // Mark as used
+      }
+    }
+
+    // Remove leftover items
+    for (auto it = pidToItemMap.begin(); it != pidToItemMap.end();)
+    {
+      if (!it.value()->data(0, Qt::UserRole).toBool())
+      {
+        delete it.value();
+        it = pidToItemMap.erase(it);
+      }
+      else
+      {
+        ++it;
       }
     }
   }
 
   void updateServices()
   {
-
-    QString selectedService;
-    if (servicesTab->currentItem())
-    {
-      selectedService =
-          servicesTab->currentItem()->text(0); // Save service name
-    }
-
     QProcess process;
     process.setProgram("systemctl");
-    process.setArguments(
-        {"--user", "list-units", "--type=service", "--all", "--output=json"});
+    process.setArguments({"--user", "list-units", "--type=service", "--all", "--output=json"});
     process.start();
     process.waitForFinished();
 
@@ -470,39 +525,54 @@ private:
       return;
     }
 
-    servicesTab->clear();                    // clear the old shi
-    QTreeWidgetItem *selectedItem = nullptr; // for restoring selection later
+    // Mark all items as unused
+    for (auto it = serviceNameToItemMap.begin(); it != serviceNameToItemMap.end(); ++it)
+    {
+      it.value()->setData(0, Qt::UserRole, false);
+    }
 
     QJsonArray services = jsonDoc.array();
     for (const QJsonValue &serviceValue : services)
     {
       QJsonObject service = serviceValue.toObject();
       QString name = service["unit"].toString();
-      QString pid = service.contains("mainPID")
-                        ? QString::number(service["mainPID"].toInt())
-                        : "-";
+      QString pid = service.contains("mainPID") ? QString::number(service["mainPID"].toInt()) : "-";
       QString description = service["description"].toString();
       QString activeState = service["active"].toString();
 
-      QTreeWidgetItem *item = new QTreeWidgetItem(servicesTab);
+      QTreeWidgetItem *item;
+      if (serviceNameToItemMap.contains(name))
+      {
+        // Update existing item
+        item = serviceNameToItemMap[name];
+      }
+      else
+      {
+        // Create new item
+        item = new QTreeWidgetItem(servicesTab);
+        serviceNameToItemMap[name] = item;
+        servicesTab->addTopLevelItem(item);
+      }
+
       item->setText(0, name);
       item->setText(1, pid);
       item->setText(2, description);
       item->setText(3, activeState);
-
-      servicesTab->addTopLevelItem(item);
-
-      // Check if this item was selected before refresh
-      if (name == selectedService)
-      {
-        selectedItem = item;
-      }
+      item->setData(0, Qt::UserRole, true); // Mark as used
     }
 
-    // restore selection if its there
-    if (selectedItem)
+    // Remove leftover items
+    for (auto it = serviceNameToItemMap.begin(); it != serviceNameToItemMap.end();)
     {
-      servicesTab->setCurrentItem(selectedItem);
+      if (!it.value()->data(0, Qt::UserRole).toBool())
+      {
+        delete it.value();
+        it = serviceNameToItemMap.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
     }
   }
 };
