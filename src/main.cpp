@@ -61,8 +61,10 @@ public:
     setStatusBar(statusBar);
 
     // 🔹 Create tab widget
-    QTabWidget *tabWidget = new QTabWidget(this);
+    tabWidget = new QTabWidget(this);
     tabWidget->setContentsMargins(128, 128, 8, 8);
+    // Connect the currentChanged signal to the custom slot
+    connect(tabWidget, &QTabWidget::currentChanged, this, &TaskManager::onTabChanged);
 
     // 🔹 Applications Tab
     applicationsTab = new QTreeWidget(this);
@@ -197,21 +199,20 @@ public:
     QTimer *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateSystemUsage);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateStatusBar);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateApplications);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateProcesses);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateServices);
+    connect(timer, &QTimer::timeout, this, &TaskManager::updateActiveTab);
     connect(timer, &QTimer::timeout, this, &TaskManager::updateGraphs);
     timer->start(1000);
 
+    onTabChanged(tabWidget->currentIndex()); // Run the function for the initially active tab
     updateSystemUsage();
     updateStatusBar();
-    updateApplications();
-    updateProcesses();
-    updateServices();
     updateGraphs();
+
+    // Selection handling
   }
 
 private:
+  QTabWidget *tabWidget;
   QStatusBar *statusBar;
 
   QTreeWidget *applicationsTab;
@@ -225,6 +226,30 @@ private:
   QString currentUser = getCurrentUser();
 
   bool showAllProcesses = false;
+
+  void onTabChanged(int index)
+  {
+    switch (index)
+    {
+    case 0: // Applications tab
+      updateApplications();
+      break;
+    case 1: // Processes tab
+      updateProcesses();
+      break;
+    case 2: // Services tab
+      updateServices();
+      break;
+    default:
+      break;
+    }
+  }
+
+  void updateActiveTab()
+  {
+    int currentIndex = tabWidget->currentIndex();
+    onTabChanged(currentIndex); // Run the function for the current active tab
+  }
 
   void updateSystemUsage()
   {
@@ -389,39 +414,6 @@ private:
       QString cmdline = cmdlineStream.readAll();
       QString status = statusStream.readAll();
 
-      QStringList statParts = stat.split(" ");
-      if (statParts.size() < 24)
-      {
-        qDebug() << "Invalid stat file format for PID" << pid;
-        continue;
-      }
-
-      QString comm = cmdline.split('\0').join(' ');
-
-      long utime = statParts[13].toLong(); // User mode time
-      long stime = statParts[14].toLong(); // Kernel mode time
-      long totalCpuTime = utime + stime;
-      long starttime = statParts[21].toLong(); // Process start time
-
-      double totalTime = uptime - (double)starttime / ticksPerSec;
-
-      double cpuUsage = 0.0;
-      if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid))
-      {
-        long prevCpuTime = previousCpuTimes[pid];
-        double prevTotalTime = previousTotalTimes[pid];
-
-        // Correct the CPU usage calculation
-        cpuUsage = ((double)(totalCpuTime - prevCpuTime) / ticksPerSec) /
-                   (totalTime - prevTotalTime) * 100.0 / numCores;
-      }
-
-      previousCpuTimes[pid] = totalCpuTime;
-      previousTotalTimes[pid] = totalTime;
-
-      long rss = statParts[23].toLong();  // RSS in pages
-      double memUsage = rss * pageSizeKb; // Convert to megabytes
-
       QStringList lines = status.split('\n');
       uid_t uid;
       for (const QString &line : lines)
@@ -456,8 +448,43 @@ private:
       }
       QString user = getUserFromUid(uid);
 
+      // Check if we only want to show current user processes
       if (showAllProcesses || user == currentUser)
       {
+
+        QStringList statParts = stat.split(" ");
+        if (statParts.size() < 24)
+        {
+          qDebug() << "Invalid stat file format for PID" << pid;
+          continue;
+        }
+
+        QString comm = cmdline.split('\0').join(' ');
+
+        long utime = statParts[13].toLong(); // User mode time
+        long stime = statParts[14].toLong(); // Kernel mode time
+        long totalCpuTime = utime + stime;
+        long starttime = statParts[21].toLong(); // Process start time
+
+        double totalTime = uptime - (double)starttime / ticksPerSec;
+
+        double cpuUsage = 0.0;
+        if (previousCpuTimes.contains(pid) && previousTotalTimes.contains(pid))
+        {
+          long prevCpuTime = previousCpuTimes[pid];
+          double prevTotalTime = previousTotalTimes[pid];
+
+          // Correct the CPU usage calculation
+          cpuUsage = ((double)(totalCpuTime - prevCpuTime) / ticksPerSec) /
+                     (totalTime - prevTotalTime) * 100.0 / numCores;
+        }
+
+        previousCpuTimes[pid] = totalCpuTime;
+        previousTotalTimes[pid] = totalTime;
+
+        long rss = statParts[23].toLong();  // RSS in pages
+        double memUsage = rss * pageSizeKb; // Convert to megabytes
+
         QTreeWidgetItem *item;
         if (pidToItemMap.contains(pid))
         {
