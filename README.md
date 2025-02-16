@@ -4,6 +4,8 @@ A Work-In-Progress program to bring the old-fashioned task manager to linux usin
 
 ![image](https://github.com/user-attachments/assets/26f1f2d2-aaf1-4653-84d0-976bb0cb169b)
 
+#### Please Note
+If you want to have the Aero theme as seen in the screenshot, take a look into [wackyideas/aerothemeplasma](https://gitgud.io/wackyideas/aerothemeplasma)
 
 ## Building
 To build the program you need cmake, qt6 base and qt6charts. These should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
@@ -34,5 +36,4 @@ sudo apt install cmake qt6-base-dev libqt6charts6-dev
 
 ### Known bugs
 - Ram usage is all over the place
-- Selections either do not persist or cannot be unselected
 - Styling can be a bit wacky
