@@ -2,7 +2,7 @@
 
 A Work-In-Progress program to bring the old-fashioned task manager to linux using Qt6 framework
 
-![image](https://github.com/user-attachments/assets/998115a1-42e6-40ae-bb10-48b6048ceb00)
+![image](https://github.com/user-attachments/assets/26f1f2d2-aaf1-4653-84d0-976bb0cb169b)
 
 
 ## Building
