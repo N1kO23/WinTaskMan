@@ -39,6 +39,14 @@ QMap<QString, QTreeWidgetItem *> appToItemMap;
 QMap<int, QTreeWidgetItem *> pidToItemMap;
 QMap<QString, QTreeWidgetItem *> serviceNameToItemMap;
 
+enum class UpdateSpeed
+{
+  High,
+  Normal,
+  Low,
+  Paused
+};
+
 class TaskManager : public QMainWindow
 {
 public:
@@ -50,12 +58,7 @@ public:
     updateSystemUsage();
 
     // 🔹 Create menu bar
-    QMenuBar *menuBar = new QMenuBar(this);
-    QMenu *fileMenu = menuBar->addMenu("File");
-    QMenu *optionsMenu = menuBar->addMenu("Options");
-    QMenu *viewMenu = menuBar->addMenu("View");
-    QMenu *helpMenu = menuBar->addMenu("Help");
-    setMenuBar(menuBar);
+    createMenus();
 
     statusBar = new QStatusBar(this);
     setStatusBar(statusBar);
@@ -195,25 +198,20 @@ public:
 
     setCentralWidget(tabWidget);
 
-    // 🔹 Timer to refresh process & service data
-    QTimer *timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateSystemUsage);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateStatusBar);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateActiveTab);
-    connect(timer, &QTimer::timeout, this, &TaskManager::updateGraphs);
-    timer->start(1000);
-
     onTabChanged(tabWidget->currentIndex()); // Run the function for the initially active tab
-    updateSystemUsage();
-    updateStatusBar();
-    updateGraphs();
+    refreshDatas();
 
-    // Selection handling
+    // 🔹 Timer to refresh process & service data
+    updateTimer = new QTimer(this);
+    connect(updateTimer, &QTimer::timeout, this, &TaskManager::refreshDatas);
+    setUpdateSpeed(UpdateSpeed::Normal); // Start the timer
   }
 
 private:
   QTabWidget *tabWidget;
   QStatusBar *statusBar;
+
+  QTimer *updateTimer;
 
   QTreeWidget *applicationsTab;
   QTreeWidget *processesTab;
@@ -226,6 +224,15 @@ private:
   QString currentUser = getCurrentUser();
 
   bool showAllProcesses = false;
+
+  // The main refresh function
+  void refreshDatas()
+  {
+    updateSystemUsage();
+    updateStatusBar();
+    updateActiveTab();
+    updateGraphs();
+  }
 
   void onTabChanged(int index)
   {
@@ -249,6 +256,87 @@ private:
   {
     int currentIndex = tabWidget->currentIndex();
     onTabChanged(currentIndex); // Run the function for the current active tab
+  }
+
+  void createMenus()
+  {
+    // Create menu bar
+    QMenuBar *menuBar = new QMenuBar(this);
+
+    // Create menus
+    QMenu *fileMenu = menuBar->addMenu("File");
+    QMenu *optionsMenu = menuBar->addMenu("Options");
+    QMenu *viewMenu = menuBar->addMenu("View");
+    QMenu *helpMenu = menuBar->addMenu("Help");
+
+    // File Menu
+    fileMenu->addAction("Run new task", this, [this]
+                        { runNewTask(); }, QKeySequence("Ctrl+N"));
+    fileMenu->addSeparator();
+    fileMenu->addAction("Exit", this, &QMainWindow::close);
+
+    // Options Menu
+    QAction *alwaysOnTop = optionsMenu->addAction("Always on top");
+    alwaysOnTop->setCheckable(true);
+    QAction *minimizeOnUse = optionsMenu->addAction("Minimize on use");
+    minimizeOnUse->setCheckable(true);
+
+    // View Menu
+    viewMenu->addAction("Refresh now", this, [this]
+                        { refreshNow(); }, QKeySequence("F5"));
+
+    QMenu *updateSpeedMenu = viewMenu->addMenu("Update speed");
+    updateSpeedMenu->addAction("High", this, [this]
+                               { setUpdateSpeed(UpdateSpeed::High); });
+    updateSpeedMenu->addAction("Normal", this, [this]
+                               { setUpdateSpeed(UpdateSpeed::Normal); });
+    updateSpeedMenu->addAction("Low", this, [this]
+                               { setUpdateSpeed(UpdateSpeed::Low); });
+    updateSpeedMenu->addAction("Paused", this, [this]
+                               { setUpdateSpeed(UpdateSpeed::Paused); });
+
+    QAction *graphsSummary = viewMenu->addAction("Graphs summary view");
+    graphsSummary->setCheckable(true);
+    QAction *showHistory = viewMenu->addAction("Show history for all processes");
+    showHistory->setCheckable(true);
+
+    // Help Menu
+    helpMenu->addAction("Help topics", this, [this]
+                        { openHelp(); });
+    helpMenu->addSeparator();
+    helpMenu->addAction("About Task Manager", this, [this]
+                        { showAbout(); });
+
+    // Set menu bar
+    setMenuBar(menuBar);
+  }
+
+  void setUpdateSpeed(UpdateSpeed speed)
+  {
+    int interval;
+
+    switch (speed)
+    {
+    case UpdateSpeed::High:
+      interval = 500; // Update every 500ms
+      qDebug() << "Setting update speed to High (500ms)";
+      break;
+    case UpdateSpeed::Normal:
+      interval = 1000; // Update every 1s
+      qDebug() << "Setting update speed to Normal (1000ms)";
+      break;
+    case UpdateSpeed::Low:
+      interval = 2000; // Update every 2s
+      qDebug() << "Setting update speed to Low (2000ms)";
+      break;
+    case UpdateSpeed::Paused:
+      updateTimer->stop(); // Stop the timer
+      qDebug() << "Updates paused";
+      return;
+    }
+
+    // Restart timer with the new interval
+    updateTimer->start(interval);
   }
 
   void updateSystemUsage()
@@ -601,6 +689,28 @@ private:
         ++it;
       }
     }
+  }
+
+  // 🔹 Implement the menu functions
+  void runNewTask()
+  {
+    qDebug() << "Run new task clicked";
+  }
+
+  void refreshNow()
+  {
+    qDebug() << "Refresh now clicked";
+    refreshDatas();
+  }
+
+  void openHelp()
+  {
+    qDebug() << "Help topics opened";
+  }
+
+  void showAbout()
+  {
+    qDebug() << "About Task Manager clicked";
   }
 };
 
