@@ -1,4 +1,5 @@
 #include "taskmanager.h"
+#include <QtConcurrent/QtConcurrent>
 #include <QAction>
 #include <QChart>
 #include <QChartView>
@@ -46,6 +47,11 @@ TaskManager::TaskManager(QWidget *parent)
   setCentralWidget(m_tabWidget);
 
   connect(m_tabWidget, &QTabWidget::currentChanged, this, &TaskManager::onTabChanged);
+
+  connect(&m_usageWatcher, &QFutureWatcher<SystemUsage>::finished, this, &TaskManager::onUsageRefreshFinished);
+  connect(&m_applicationsWatcher, &QFutureWatcher<QStringList>::finished, this, &TaskManager::onApplicationsRefreshFinished);
+  connect(&m_processesWatcher, &QFutureWatcher<QList<ProcessInfo>>::finished, this, &TaskManager::onProcessesRefreshFinished);
+  connect(&m_servicesWatcher, &QFutureWatcher<QList<ServiceInfo>>::finished, this, &TaskManager::onServicesRefreshFinished);
 
   m_updateTimer = new QTimer(this);
   connect(m_updateTimer, &QTimer::timeout, this, &TaskManager::refreshData);
@@ -151,7 +157,7 @@ void TaskManager::createTabs()
   connect(toggleFilterButton, &QCheckBox::toggled, this, [this](bool checked)
           {
         m_showAllProcesses = checked;
-        updateProcesses(); });
+        refreshProcessesAsync(); });
 
   connect(m_processesTab, &QTreeWidget::itemSelectionChanged, this, [this, endProcessButton]()
           { endProcessButton->setEnabled(!m_processesTab->selectedItems().isEmpty()); });
@@ -169,7 +175,7 @@ void TaskManager::createTabs()
         if (QMessageBox::question(this, "Confirm", "Are you sure you want to end this process?") == QMessageBox::Yes)
         {
             kill(pid, SIGTERM);
-            updateProcesses();
+            refreshProcessesAsync();
         } });
 
   m_servicesTab = new QTreeWidget(this);
@@ -262,10 +268,75 @@ void TaskManager::createPerformanceChart()
 
 void TaskManager::refreshData()
 {
-  m_usage = m_dataProvider.refreshSystemUsage();
+  refreshUsageAsync();
+  refreshApplicationsAsync();
+  refreshProcessesAsync();
+  refreshServicesAsync();
+}
+
+void TaskManager::refreshUsageAsync()
+{
+  if (m_usageWatcher.isRunning())
+    return;
+
+  m_usageWatcher.setFuture(QtConcurrent::run([this]()
+                                             { return m_dataProvider.refreshSystemUsage(); }));
+}
+
+void TaskManager::refreshApplicationsAsync()
+{
+  if (m_applicationsWatcher.isRunning() || m_tabWidget->currentIndex() != 0)
+    return;
+
+  m_applicationsWatcher.setFuture(QtConcurrent::run([this]()
+                                                    { return m_dataProvider.refreshApplications(); }));
+}
+
+void TaskManager::refreshProcessesAsync()
+{
+  if (m_processesWatcher.isRunning() || m_tabWidget->currentIndex() != 1)
+    return;
+
+  const bool includeAllUsers = m_showAllProcesses;
+  m_processesWatcher.setFuture(QtConcurrent::run([this, includeAllUsers]()
+                                                 { return m_dataProvider.refreshProcessList(includeAllUsers); }));
+}
+
+void TaskManager::refreshServicesAsync()
+{
+  if (m_servicesWatcher.isRunning() || m_tabWidget->currentIndex() != 2)
+    return;
+
+  m_servicesWatcher.setFuture(QtConcurrent::run([this]()
+                                                { return m_dataProvider.refreshServices(); }));
+}
+
+void TaskManager::onUsageRefreshFinished()
+{
+  m_usage = m_usageWatcher.result();
   updateStatusBar();
-  updateActiveTab();
   updateGraphs();
+}
+
+void TaskManager::onApplicationsRefreshFinished()
+{
+  m_cachedApplications = m_applicationsWatcher.result();
+  if (m_tabWidget->currentIndex() == 0)
+    updateApplications();
+}
+
+void TaskManager::onProcessesRefreshFinished()
+{
+  m_cachedProcesses = m_processesWatcher.result();
+  if (m_tabWidget->currentIndex() == 1)
+    updateProcesses();
+}
+
+void TaskManager::onServicesRefreshFinished()
+{
+  m_cachedServices = m_servicesWatcher.result();
+  if (m_tabWidget->currentIndex() == 2)
+    updateServices();
 }
 
 void TaskManager::onTabChanged(int index)
@@ -273,13 +344,19 @@ void TaskManager::onTabChanged(int index)
   switch (index)
   {
   case 0:
-    updateApplications();
+    if (!m_cachedApplications.isEmpty())
+      updateApplications();
+    refreshApplicationsAsync();
     break;
   case 1:
-    updateProcesses();
+    if (!m_cachedProcesses.isEmpty())
+      updateProcesses();
+    refreshProcessesAsync();
     break;
   case 2:
-    updateServices();
+    if (!m_cachedServices.isEmpty())
+      updateServices();
+    refreshServicesAsync();
     break;
   default:
     break;
@@ -288,7 +365,20 @@ void TaskManager::onTabChanged(int index)
 
 void TaskManager::updateActiveTab()
 {
-  onTabChanged(m_tabWidget->currentIndex());
+  switch (m_tabWidget->currentIndex())
+  {
+  case 0:
+    refreshApplicationsAsync();
+    break;
+  case 1:
+    refreshProcessesAsync();
+    break;
+  case 2:
+    refreshServicesAsync();
+    break;
+  default:
+    break;
+  }
 }
 
 void TaskManager::updateStatusBar()
@@ -409,7 +499,7 @@ void TaskManager::updateGraphs()
 
 void TaskManager::updateApplications()
 {
-  const QStringList applications = m_dataProvider.refreshApplications();
+  const QStringList &applications = m_cachedApplications;
 
   for (auto it = m_appToItemMap.begin(); it != m_appToItemMap.end(); ++it)
     it.value()->setData(0, Qt::UserRole, false);
@@ -448,7 +538,7 @@ void TaskManager::updateApplications()
 
 void TaskManager::updateProcesses()
 {
-  const QList<ProcessInfo> processes = m_dataProvider.refreshProcessList(m_showAllProcesses);
+  const QList<ProcessInfo> &processes = m_cachedProcesses;
 
   for (auto it = m_pidToItemMap.begin(); it != m_pidToItemMap.end(); ++it)
     it.value()->setData(0, Qt::UserRole, false);
@@ -496,7 +586,7 @@ void TaskManager::updateProcesses()
 
 void TaskManager::updateServices()
 {
-  const QList<ServiceInfo> services = m_dataProvider.refreshServices();
+  const QList<ServiceInfo> &services = m_cachedServices;
 
   for (auto it = m_serviceNameToItemMap.begin(); it != m_serviceNameToItemMap.end(); ++it)
     it.value()->setData(0, Qt::UserRole, false);

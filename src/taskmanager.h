@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QFutureWatcher>
 #include <QMap>
 #include <QVector>
 
@@ -39,6 +40,10 @@ private:
   void createTabs();
   void createPerformanceChart();
   void refreshData();
+  void refreshUsageAsync();
+  void refreshApplicationsAsync();
+  void refreshProcessesAsync();
+  void refreshServicesAsync();
   void updateActiveTab();
   void updateStatusBar();
   void updateGraphs();
@@ -55,6 +60,12 @@ private:
 
   void onTabChanged(int index);
 
+private slots:
+  void onUsageRefreshFinished();
+  void onApplicationsRefreshFinished();
+  void onProcessesRefreshFinished();
+  void onServicesRefreshFinished();
+
 private:
   SystemDataProvider m_dataProvider;
   SystemUsage m_usage;
@@ -62,6 +73,10 @@ private:
   QTabWidget *m_tabWidget = nullptr;
   QStatusBar *m_statusBar = nullptr;
   QTimer *m_updateTimer = nullptr;
+  QFutureWatcher<SystemUsage> m_usageWatcher;
+  QFutureWatcher<QStringList> m_applicationsWatcher;
+  QFutureWatcher<QList<ProcessInfo>> m_processesWatcher;
+  QFutureWatcher<QList<ServiceInfo>> m_servicesWatcher;
   QTreeWidget *m_applicationsTab = nullptr;
   QTreeWidget *m_processesTab = nullptr;
   QTreeWidget *m_servicesTab = nullptr;
@@ -82,5 +97,8 @@ private:
   QMap<QString, QTreeWidgetItem *> m_appToItemMap;
   QMap<int, QTreeWidgetItem *> m_pidToItemMap;
   QMap<QString, QTreeWidgetItem *> m_serviceNameToItemMap;
+  QStringList m_cachedApplications;
+  QList<ProcessInfo> m_cachedProcesses;
+  QList<ServiceInfo> m_cachedServices;
   bool m_showAllProcesses = false;
 };
