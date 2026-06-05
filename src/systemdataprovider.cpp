@@ -1,16 +1,20 @@
 #include "systemdataprovider.h"
 #include "helperutils.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTextStream>
 #include <QDateTime>
+#include <functional>
 #include <unistd.h>
 
 SystemDataProvider::SystemDataProvider()
@@ -106,15 +110,23 @@ QList<ProcessInfo> SystemDataProvider::refreshProcessList(bool includeAllUsers)
     if (!includeAllUsers && user != m_currentUser)
       continue;
 
-    const QStringList statParts = stat.split(' ', Qt::SkipEmptyParts);
-    if (statParts.size() < 24)
+    int begin = stat.indexOf('(');
+    int end = stat.lastIndexOf(')');
+    if (begin < 0 || end < 0 || end <= begin)
       continue;
 
-    const QString name = cmdline.split(QLatin1Char('\0'), Qt::SkipEmptyParts).join(' ').trimmed();
-    const long utime = statParts[13].toLong();
-    const long stime = statParts[14].toLong();
-    const long starttime = statParts[21].toLong();
-    const long rssPages = statParts[23].toLong();
+    const QStringList statFields = stat.mid(end + 2).split(' ', Qt::SkipEmptyParts);
+    if (statFields.size() < 22)
+      continue;
+
+    const QString commandLine = cmdline.split(QLatin1Char('\0'), Qt::SkipEmptyParts).join(' ').trimmed();
+    const QString statName = stat.mid(begin + 1, end - begin - 1);
+    const QString name = commandLine.isEmpty() ? statName : commandLine;
+
+    const long utime = statFields[11].toLong();
+    const long stime = statFields[12].toLong();
+    const long starttime = statFields[19].toLong();
+    const long rssPages = statFields[21].toLong();
     const double totalCpuTime = static_cast<double>(utime + stime);
     const double processSeconds = uptimeSeconds - (static_cast<double>(starttime) / ticksPerSec);
 
@@ -134,7 +146,7 @@ QList<ProcessInfo> SystemDataProvider::refreshProcessList(bool includeAllUsers)
 
     ProcessInfo info;
     info.pid = pid;
-    info.name = name.isEmpty() ? statParts[1].trimmed().remove('(').remove(')') : name;
+    info.name = name.isEmpty() ? statName : name;
     info.user = user;
     info.cpuPercent = cpuPercent;
     info.memoryKb = static_cast<double>(rssPages) * pageSizeKb;
@@ -172,34 +184,222 @@ QList<ServiceInfo> SystemDataProvider::refreshServices()
   return services;
 }
 
+static bool isExcludedWaylandClient(const QString &name)
+{
+  static const QSet<QString> excluded = {
+      "xwayland", "wayland", "gnome-shell", "kwin_wayland", "plasmashell",
+      "sway", "weston", "waybar", "pipewire", "wireplumber",
+      "xdg-desktop-portal", "xdg-desktop-portal-wlr", "dbus-daemon",
+      "systemd", "bash", "sh", "zsh", "fish", "login", "loginctl",
+      "gnome-session", "ksmserver", "kded5", "autostart"};
+  return excluded.contains(name.toLower());
+}
+
+static bool hasOpenWaylandSocket(int pid)
+{
+  const QString fdDirPath = QStringLiteral("/proc/%1/fd").arg(pid);
+  QDir fdDir(fdDirPath);
+  if (!fdDir.exists())
+    return false;
+
+  const QFileInfoList fdEntries = fdDir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
+  for (const QFileInfo &fdEntry : fdEntries)
+  {
+    const QString target = QFile::symLinkTarget(fdEntry.filePath());
+    if (target.contains(QStringLiteral("wayland-"), Qt::CaseInsensitive))
+      return true;
+    if (target.contains(QStringLiteral("/run/user/"), Qt::CaseInsensitive) && target.contains(QStringLiteral("wayland"), Qt::CaseInsensitive))
+      return true;
+  }
+
+  return false;
+}
+
+static QStringList collectSwayApplications()
+{
+  QProcess process;
+  process.setProgram("swaymsg");
+  process.setArguments({"-t", "get_tree"});
+  process.start();
+  if (!process.waitForFinished(1000))
+    return {};
+
+  const QJsonDocument document = QJsonDocument::fromJson(process.readAllStandardOutput());
+  if (!document.isObject())
+    return {};
+
+  QStringList applications;
+  const std::function<void(const QJsonObject &)> scanNode = [&](const QJsonObject &node)
+  {
+    const QString type = node.value("type").toString();
+    const bool visible = node.value("visible").toBool();
+    const bool hasWindow = !node.value("window").isNull();
+
+    if ((type == "con" || type == "floating_con") && hasWindow && visible)
+    {
+      const QJsonObject properties = node.value("window_properties").toObject();
+      QString appId = properties.value("class").toString();
+      if (appId.isEmpty())
+        appId = properties.value("instance").toString();
+      if (appId.isEmpty())
+        appId = node.value("app_id").toString();
+      if (appId.isEmpty())
+        appId = node.value("name").toString();
+
+      if (!appId.isEmpty() && !isExcludedWaylandClient(appId))
+        applications.append(appId);
+    }
+
+    for (const QJsonValue &child : node.value("nodes").toArray())
+      scanNode(child.toObject());
+    for (const QJsonValue &child : node.value("floating_nodes").toArray())
+      scanNode(child.toObject());
+  };
+
+  scanNode(document.object());
+  applications.removeDuplicates();
+  applications.sort();
+  return applications;
+}
+
+static QStringList collectGenericWaylandApplications(const QString &currentUser)
+{
+  const uid_t currentUid = geteuid();
+  QStringList applications;
+  QDir procDir("/proc");
+  const QFileInfoList procEntries = procDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+
+  for (const QFileInfo &entry : procEntries)
+  {
+    const int pid = entry.fileName().toInt();
+    if (pid <= 0)
+      continue;
+
+    QFile environFile(entry.filePath() + "/environ");
+    if (!environFile.open(QIODevice::ReadOnly))
+    {
+      qDebug() << "cannot open environ for" << pid << environFile.errorString();
+      continue;
+    }
+
+    const QByteArray envData = environFile.readAll();
+    environFile.close();
+    if (!envData.contains("WAYLAND_DISPLAY=") && !envData.contains("WAYLAND_SOCKET="))
+      continue;
+
+    if (!hasOpenWaylandSocket(pid))
+    {
+      qDebug() << "pid" << pid << "has no open Wayland socket";
+      continue;
+    }
+
+    qDebug() << "wayland candidate pid" << pid << "env contains" << envData.contains("WAYLAND_DISPLAY=") << envData.contains("WAYLAND_SOCKET=");
+
+    QFile statusFile(entry.filePath() + "/status");
+    if (!statusFile.open(QIODevice::ReadOnly))
+    {
+      qDebug() << "cannot open status for" << pid << statusFile.errorString();
+      continue;
+    }
+
+    const QByteArray statusData = statusFile.readAll();
+    statusFile.close();
+
+    uid_t ownerUid = 0;
+    const QStringList statusLines = QString::fromLocal8Bit(statusData).split('\n', Qt::SkipEmptyParts);
+    for (const QString &line : statusLines)
+    {
+      if (line.startsWith("Uid:"))
+      {
+        const QStringList uidParts = line.mid(4).trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (!uidParts.isEmpty())
+          ownerUid = static_cast<uid_t>(uidParts.first().toInt());
+        break;
+      }
+    }
+
+    if (ownerUid != currentUid)
+    {
+      qDebug() << "pid" << pid << "skipping ownerUid" << ownerUid << "currentUid" << currentUid;
+      continue;
+    }
+
+    QString appName;
+    QFile cmdlineFile(entry.filePath() + "/cmdline");
+    if (cmdlineFile.open(QIODevice::ReadOnly))
+    {
+      const QByteArray cmdlineData = cmdlineFile.readAll();
+      cmdlineFile.close();
+      const QStringList parts = QString::fromLocal8Bit(cmdlineData).split('\0', Qt::SkipEmptyParts);
+      qDebug() << "pid" << pid << "cmdline raw" << cmdlineData << "parts" << parts;
+      if (!parts.isEmpty())
+        appName = QFileInfo(parts.first()).fileName();
+    }
+
+    if (appName.isEmpty())
+    {
+      QFile commFile(entry.filePath() + "/comm");
+      if (commFile.open(QIODevice::ReadOnly))
+      {
+        appName = QString::fromLocal8Bit(commFile.readAll()).trimmed();
+        commFile.close();
+        qDebug() << "pid" << pid << "comm name" << appName;
+      }
+    }
+
+    qDebug() << "pid" << pid << "appName" << appName;
+    if (appName.isEmpty())
+      continue;
+
+    if (isExcludedWaylandClient(appName))
+    {
+      qDebug() << "pid" << pid << "excluded" << appName;
+      continue;
+    }
+
+    applications.append(appName);
+  }
+
+  applications.removeDuplicates();
+  applications.sort();
+  qDebug() << "collectWaylandApplications found" << applications.size() << "apps";
+  return applications;
+}
+
+static QStringList collectWaylandApplications(const QString &currentUser)
+{
+  if (!qEnvironmentVariable("SWAYSOCK").isEmpty())
+    return collectSwayApplications();
+
+  return collectGenericWaylandApplications(currentUser);
+}
+
 QStringList SystemDataProvider::refreshApplications()
 {
-  QString displayType = qEnvironmentVariable("XDG_SESSION_TYPE");
-  QString script;
-  if (displayType == "x11")
+  const QString displayType = qEnvironmentVariable("XDG_SESSION_TYPE").toLower();
+  const bool isWayland = displayType == "wayland" || !qEnvironmentVariable("WAYLAND_DISPLAY").isEmpty();
+  const bool isX11 = displayType == "x11" || displayType == "xorg";
+
+  if (isX11)
   {
-    script = R"(xlsclients | awk '{print $2}' | sort -u)";
+    QStringList applications;
+    QProcess process;
+    process.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
+    process.start("bash", QStringList() << "-lc" << R"(xlsclients | awk '{print $2}' | sort -u)");
+    process.waitForFinished();
+    const QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
+    for (const QString &line : output.split('\n', Qt::SkipEmptyParts))
+      applications.append(line.trimmed());
+    applications.removeDuplicates();
+    applications.sort();
+    return applications;
   }
-  else if (displayType == "wayland")
+  else if (isWayland)
   {
-    script = R"(x_apps=$(xlsclients 2>/dev/null | awk '{print $2}' | sort -u)
-w_apps=$(ps -eo pid,comm,args | grep -E 'wayland|Xwayland' | awk '{print $2}' | sort -u)
-echo -e "$x_apps
-$w_apps" | sort -u)";
-  }
-  else
-  {
-    script = R"(echo 'Unknown display server')";
+    return collectWaylandApplications(m_currentUser);
   }
 
-  QProcess process;
-  process.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
-  process.start("bash", QStringList() << "-lc" << script);
-  process.waitForFinished();
-
-  const QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
-  const QStringList applications = output.split('\n', Qt::SkipEmptyParts);
-  return applications;
+  return QStringList{"Unknown display server"};
 }
 
 SystemUsage SystemDataProvider::readSystemUsage()
@@ -270,18 +470,54 @@ SystemUsage SystemDataProvider::readSystemUsage()
   if (memFile.open(QIODevice::ReadOnly | QIODevice::Text))
   {
     QTextStream stream(&memFile);
-    const QString memTotalLine = stream.readLine();
-    const QString memAvailableLine = stream.readLine();
+    qint64 memTotal = -1;
+    qint64 memAvailable = -1;
+    qint64 memFree = -1;
+    qint64 buffers = 0;
+    qint64 cached = 0;
+
+    while (!stream.atEnd())
+    {
+      const QString line = stream.readLine().trimmed();
+      const QStringList fields = line.split(':', Qt::SkipEmptyParts);
+      if (fields.size() < 2)
+        continue;
+
+      const QString key = fields[0].trimmed();
+      const QStringList tokens = fields[1].trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+      const qint64 value = tokens.value(0).toLongLong();
+
+      if (key == QLatin1String("MemTotal"))
+        memTotal = value;
+      else if (key == QLatin1String("MemAvailable"))
+        memAvailable = value;
+      else if (key == QLatin1String("MemFree"))
+        memFree = value;
+      else if (key == QLatin1String("Buffers"))
+        buffers = value;
+      else if (key == QLatin1String("Cached"))
+        cached = value;
+
+      if (memTotal > 0 && memAvailable > 0)
+        break;
+    }
     memFile.close();
 
-    const QStringList totalParts = memTotalLine.split(' ', Qt::SkipEmptyParts);
-    const QStringList availableParts = memAvailableLine.split(' ', Qt::SkipEmptyParts);
-    if (totalParts.size() > 1 && availableParts.size() > 1)
+    if (memTotal > 0)
     {
-      usage.totalRam = totalParts[1].toInt();
-      const int available = availableParts[1].toInt();
-      usage.ramUsage = usage.totalRam - available;
+      usage.totalRam = memTotal;
+      if (memAvailable > 0)
+      {
+        usage.ramUsage = memTotal - memAvailable;
+      }
+      else if (memFree >= 0)
+      {
+        const qint64 availableEstimate = memFree + buffers + cached;
+        usage.ramUsage = qMax<qint64>(0, memTotal - availableEstimate);
+      }
     }
+
+    qDebug() << "readSystemUsage:" << usage.totalRam << "kB total," << usage.ramUsage << "kB used";
   }
 
   return usage;

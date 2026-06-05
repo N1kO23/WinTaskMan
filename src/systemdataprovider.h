@@ -25,8 +25,8 @@ struct ServiceInfo
 struct SystemUsage
 {
   int cpuUsage = 0;
-  int ramUsage = 0;
-  int totalRam = 0;
+  qint64 ramUsage = 0;
+  qint64 totalRam = 0;
   int coreCount = 0;
   QVector<int> coreUsages;
   int totalProcesses = 0;
