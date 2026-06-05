@@ -21,19 +21,21 @@ sudo apt install cmake qt6-base-dev libqt6charts6-dev
 ```
 
 ### What works
+- Running applications being listed (wayland lists all current session apps, not just ones with windows open)
 - Processes being listed
-- User services being listed
+- User services being listed (systemd and openrc supported)
 - Per process CPU usage
 - Total CPU usage
 - Total process count
 
 ### What is missing
 - Network tab contents as a whole
-- Performance tab contents mostly missing, only 1 wip graph currently
+- Performance tab contents mostly missing
 - User tab contents as whole
 - Control buttons from all tabs
 - Menubar actions
 
 ### Known bugs
-- Ram usage is all over the place
+- Total RAM usage treats cached memory as used
+- Individual core graphs are not displayed correctly
 - Styling can be a bit wacky
