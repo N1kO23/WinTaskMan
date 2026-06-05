@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts)
 
+set(CMAKE_AUTOMOC ON)
+
 qt_add_resources(APP_RESOURCES resources.qrc)
 
 add_executable(WinTaskMan 
