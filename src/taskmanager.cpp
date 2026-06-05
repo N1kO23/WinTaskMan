@@ -1,4 +1,5 @@
 #include "taskmanager.h"
+#include "rundialog.h"
 #include <QtConcurrent/QtConcurrent>
 #include <QAction>
 #include <QChart>
@@ -627,7 +628,8 @@ void TaskManager::updateServices()
 
 void TaskManager::runNewTask()
 {
-  qDebug() << "Run new task clicked";
+  RunDialog dialog(this);
+  dialog.exec();
 }
 
 void TaskManager::refreshNow()

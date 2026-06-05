@@ -17,6 +17,7 @@ class QWidget;
 class QGridLayout;
 class QAction;
 class QScrollArea;
+class RunDialog;
 
 #include "systemdataprovider.h"
 

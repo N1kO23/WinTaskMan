@@ -14,6 +14,7 @@ add_executable(WinTaskMan
     src/taskmanager.cpp 
     src/systemdataprovider.cpp 
     src/helperutils.cpp
+    src/rundialog.cpp
 )
 
 target_link_libraries(WinTaskMan Qt6::Core Qt6::Widgets Qt6::Charts)
