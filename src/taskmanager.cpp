@@ -6,6 +6,8 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLineSeries>
+#include <QColor>
+#include <QAbstractAxis>
 #include <QMenuBar>
 #include <QProcess>
 #include <QPushButton>
@@ -15,6 +17,8 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QGridLayout>
+#include <QScrollArea>
 #include <QValueAxis>
 #include <QCheckBox>
 #include <QMessageBox>
@@ -72,7 +76,15 @@ void TaskManager::createMenus()
                              { setUpdateSpeed(UpdateSpeed::Paused); });
 
   viewMenu->addSeparator();
-  viewMenu->addAction("Graphs summary view", this, []() {})->setCheckable(true);
+  QAction *individualCore = viewMenu->addAction("Individual core usage");
+  individualCore->setCheckable(true);
+  m_graphSummaryAction = individualCore;
+  connect(m_graphSummaryAction, &QAction::toggled, this, [this](bool checked)
+          {
+            if (m_coreScrollArea)
+              m_coreScrollArea->setVisible(checked);
+            if (m_cpuChartView)
+              m_cpuChartView->setVisible(!checked); });
   viewMenu->addAction("Show history for all processes", this, []() {})->setCheckable(true);
 
   helpMenu->addAction("Help topics", this, &TaskManager::openHelp);
@@ -163,34 +175,71 @@ void TaskManager::createTabs()
 
 void TaskManager::createPerformanceChart()
 {
-  m_performanceChart = new QChart();
+  // Create CPU chart (total)
   m_performanceSeries = new QLineSeries();
-  m_performanceChart->addSeries(m_performanceSeries);
-  m_performanceChart->legend()->hide();
-  m_performanceChart->setBackgroundBrush(QBrush(Qt::black));
-  m_performanceChart->setTitleBrush(QBrush(Qt::white));
-  m_performanceChart->setPlotAreaBackgroundVisible(true);
-  m_performanceChart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
-  m_performanceSeries->setColor(Qt::green);
-
-  QValueAxis *axisX = new QValueAxis();
-  QValueAxis *axisY = new QValueAxis();
-  axisX->setRange(0, 60);
-  axisY->setRange(0, 100);
-  axisX->setGridLinePen(QPen(Qt::darkGreen));
-  axisY->setGridLinePen(QPen(Qt::darkGreen));
-
-  m_performanceChart->addAxis(axisX, Qt::AlignBottom);
-  m_performanceChart->addAxis(axisY, Qt::AlignLeft);
-  m_performanceSeries->attachAxis(axisX);
-  m_performanceSeries->attachAxis(axisY);
+  QChart *cpuChart = new QChart();
+  cpuChart->addSeries(m_performanceSeries);
+  cpuChart->legend()->hide();
+  cpuChart->setBackgroundBrush(QBrush(Qt::black));
+  cpuChart->setPlotAreaBackgroundVisible(true);
+  cpuChart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
+  m_performanceSeries->setName("CPU %");
   m_performanceSeries->setPen(QPen(Qt::green, 2));
+  QValueAxis *cpuAxisX = new QValueAxis();
+  QValueAxis *cpuAxisY = new QValueAxis();
+  cpuAxisX->setRange(0, 60);
+  cpuAxisY->setRange(0, 100);
+  cpuAxisX->setGridLinePen(QPen(Qt::darkGreen));
+  cpuAxisY->setGridLinePen(QPen(Qt::darkGreen));
+  cpuChart->addAxis(cpuAxisX, Qt::AlignBottom);
+  cpuChart->addAxis(cpuAxisY, Qt::AlignLeft);
+  m_performanceSeries->attachAxis(cpuAxisX);
+  m_performanceSeries->attachAxis(cpuAxisY);
+  m_cpuChartView = new QChartView(cpuChart);
 
-  QChartView *performanceChartView = new QChartView(m_performanceChart);
+  // Create Memory chart
+  m_memorySeries = new QLineSeries();
+  QChart *memChart = new QChart();
+  memChart->addSeries(m_memorySeries);
+  memChart->legend()->hide();
+  memChart->setBackgroundBrush(QBrush(Qt::black));
+  memChart->setPlotAreaBackgroundVisible(true);
+  memChart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
+  m_memorySeries->setName("Memory %");
+  m_memorySeries->setPen(QPen(Qt::blue, 2));
+  QValueAxis *memAxisX = new QValueAxis();
+  QValueAxis *memAxisY = new QValueAxis();
+  memAxisX->setRange(0, 60);
+  memAxisY->setRange(0, 100);
+  memAxisX->setGridLinePen(QPen(Qt::darkBlue));
+  memAxisY->setGridLinePen(QPen(Qt::darkBlue));
+  memChart->addAxis(memAxisX, Qt::AlignBottom);
+  memChart->addAxis(memAxisY, Qt::AlignLeft);
+  m_memorySeries->attachAxis(memAxisX);
+  m_memorySeries->attachAxis(memAxisY);
+  m_memoryChartView = new QChartView(memChart);
+
+  // Container for per-core charts
+  m_coreContainerWidget = new QWidget();
+  m_coreGridLayout = new QGridLayout(m_coreContainerWidget);
+  m_coreGridLayout->setSpacing(6);
+  m_coreGridLayout->setContentsMargins(0, 0, 0, 0);
+
+  m_coreScrollArea = new QScrollArea();
+  m_coreScrollArea->setWidgetResizable(true);
+  m_coreScrollArea->setWidget(m_coreContainerWidget);
+
+  // Compose performance tab
   QWidget *performanceTab = new QWidget(this);
   QVBoxLayout *performanceLayout = new QVBoxLayout(performanceTab);
-  performanceLayout->addWidget(performanceChartView);
   performanceLayout->setContentsMargins(12, 12, 10, 10);
+  performanceLayout->setSpacing(8);
+  performanceLayout->addWidget(m_cpuChartView);
+  performanceLayout->addWidget(m_coreScrollArea);
+  performanceLayout->addWidget(m_memoryChartView);
+  // hide per-core charts by default; summary (memory) remains visible
+  if (m_coreScrollArea)
+    m_coreScrollArea->setVisible(false);
   performanceTab->setLayout(performanceLayout);
   m_tabWidget->addTab(performanceTab, "Performance");
 }
@@ -238,20 +287,97 @@ void TaskManager::updateStatusBar()
 
 void TaskManager::updateGraphs()
 {
-  if (!m_performanceSeries)
+  if (!m_performanceSeries || !m_memorySeries || !m_cpuChartView || !m_memoryChartView)
     return;
 
-  while (m_performanceSeries->count() >= 60)
-    m_performanceSeries->removePoints(0, 1);
+  const int coreCount = m_usage.coreCount;
 
-  for (int i = 0; i < m_performanceSeries->count(); ++i)
+  // create or remove per-core chart widgets/series as needed
+  while (m_coreSeries.size() < coreCount)
   {
-    QPointF point = m_performanceSeries->at(i);
-    m_performanceSeries->replace(i, QPointF(point.x() - 1.0, point.y()));
+    const int idx = m_coreSeries.size();
+    QLineSeries *series = new QLineSeries();
+    series->setName(QString("Core %1").arg(idx));
+    QColor c = QColor::fromHsv((idx * 40) % 360, 200, 200);
+    series->setPen(QPen(c, 1));
+
+    QChart *chart = new QChart();
+    chart->addSeries(series);
+    chart->legend()->hide();
+    chart->setBackgroundBrush(QBrush(Qt::black));
+    QValueAxis *axisX = new QValueAxis();
+    QValueAxis *axisY = new QValueAxis();
+    axisX->setRange(0, 60);
+    axisY->setRange(0, 100);
+    chart->addAxis(axisX, Qt::AlignBottom);
+    chart->addAxis(axisY, Qt::AlignLeft);
+    series->attachAxis(axisX);
+    series->attachAxis(axisY);
+
+    QChartView *view = new QChartView(chart);
+    view->setMinimumHeight(80);
+
+    const int cols = 4;
+    const int row = idx / cols;
+    const int col = idx % cols;
+    m_coreGridLayout->addWidget(view, row, col);
+
+    m_coreSeries.append(series);
+    m_coreChartViews.append(view);
   }
 
+  while (m_coreSeries.size() > coreCount)
+  {
+    QLineSeries *s = m_coreSeries.takeLast();
+    QChartView *v = m_coreChartViews.takeLast();
+    m_coreGridLayout->removeWidget(v);
+    delete v;
+    delete s;
+  }
+
+  auto shiftAndTrim = [](QLineSeries *series)
+  {
+    while (series->count() >= 60)
+      series->removePoints(0, 1);
+    for (int i = 0; i < series->count(); ++i)
+    {
+      QPointF point = series->at(i);
+      series->replace(i, QPointF(point.x() - 1.0, point.y()));
+    }
+  };
+
+  // Shift existing points
+  shiftAndTrim(m_performanceSeries);
+  shiftAndTrim(m_memorySeries);
+  for (QLineSeries *coreSeries : m_coreSeries)
+    shiftAndTrim(coreSeries);
+
+  // Append new values at right edge (60)
   m_performanceSeries->append(60, m_usage.cpuUsage);
-  m_performanceChart->update();
+  const double memoryPercent = m_usage.totalRam > 0 ? (m_usage.ramUsage * 100.0) / m_usage.totalRam : 0.0;
+  m_memorySeries->append(60, memoryPercent);
+
+  for (int i = 0; i < m_coreSeries.size(); ++i)
+  {
+    int val = 0;
+    if (i < m_usage.coreUsages.size())
+      val = m_usage.coreUsages[i];
+    m_coreSeries[i]->append(60, val);
+  }
+
+  // show/hide core area and CPU summary depending on 'Individual core usage' toggle
+  if (m_graphSummaryAction && m_coreScrollArea && m_cpuChartView)
+  {
+    const bool showIndividual = m_graphSummaryAction->isChecked();
+    m_coreScrollArea->setVisible(showIndividual);
+    m_cpuChartView->setVisible(!showIndividual);
+  }
+
+  // refresh views
+  m_cpuChartView->chart()->update();
+  m_memoryChartView->chart()->update();
+  for (QChartView *v : m_coreChartViews)
+    v->chart()->update();
 }
 
 void TaskManager::updateApplications()

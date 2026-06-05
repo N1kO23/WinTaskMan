@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QMap>
+#include <QVector>
 
 class QChart;
 class QLineSeries;
@@ -10,6 +11,11 @@ class QTabWidget;
 class QTreeWidget;
 class QTimer;
 class QTreeWidgetItem;
+class QChartView;
+class QWidget;
+class QGridLayout;
+class QAction;
+class QScrollArea;
 
 #include "systemdataprovider.h"
 
@@ -59,8 +65,19 @@ private:
   QTreeWidget *m_applicationsTab = nullptr;
   QTreeWidget *m_processesTab = nullptr;
   QTreeWidget *m_servicesTab = nullptr;
-  QChart *m_performanceChart = nullptr;
+  QChart *m_performanceChart = nullptr; // kept for compatibility but not used for per-graph charts
   QLineSeries *m_performanceSeries = nullptr;
+  QLineSeries *m_memorySeries = nullptr;
+  QVector<QLineSeries *> m_coreSeries;
+
+  // New per-chart UI elements
+  QChartView *m_cpuChartView = nullptr;
+  QChartView *m_memoryChartView = nullptr;
+  QVector<QChartView *> m_coreChartViews;
+  QWidget *m_coreContainerWidget = nullptr;
+  QGridLayout *m_coreGridLayout = nullptr;
+  QScrollArea *m_coreScrollArea = nullptr;
+  QAction *m_graphSummaryAction = nullptr;
 
   QMap<QString, QTreeWidgetItem *> m_appToItemMap;
   QMap<int, QTreeWidgetItem *> m_pidToItemMap;
