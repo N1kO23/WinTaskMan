@@ -321,7 +321,7 @@ void TaskManager::updateProcesses()
     item->setTextAlignment(3, Qt::AlignCenter);
 
     const QLocale locale = QLocale::system();
-    item->setText(4, locale.toString(process.memoryKb) + " K");
+    item->setText(4, locale.toString(process.memoryKb, 'f', 0) + " K");
     item->setData(4, Qt::UserRole, process.memoryKb);
     item->setTextAlignment(4, Qt::AlignRight);
     item->setData(0, Qt::UserRole, true);
