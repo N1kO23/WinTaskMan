@@ -16,6 +16,7 @@
 #include <QDateTime>
 #include <functional>
 #include <unistd.h>
+#include <sys/sysinfo.h>
 
 SystemDataProvider::SystemDataProvider()
 {
@@ -330,7 +331,7 @@ static QStringList collectGenericWaylandApplications(const QString &currentUser)
     {
       const QByteArray cmdlineData = cmdlineFile.readAll();
       cmdlineFile.close();
-      const QStringList parts = QString::fromLocal8Bit(cmdlineData).split('\0', Qt::SkipEmptyParts);
+      const QStringList parts = QString::fromLocal8Bit(cmdlineData).split(QLatin1Char('\0'), Qt::SkipEmptyParts);
       qDebug() << "pid" << pid << "cmdline raw" << cmdlineData << "parts" << parts;
       if (!parts.isEmpty())
         appName = QFileInfo(parts.first()).fileName();
@@ -466,15 +467,27 @@ SystemUsage SystemDataProvider::readSystemUsage()
     cpuFile.close();
   }
 
+  qint64 memTotal = -1;
+  qint64 memAvailable = -1;
+  qint64 memFree = -1;
+  qint64 buffers = 0;
+  qint64 cached = 0;
+  qint64 sReclaimable = 0;
+  qint64 shmem = 0;
+
   QFile memFile("/proc/meminfo");
   if (memFile.open(QIODevice::ReadOnly | QIODevice::Text))
   {
+    // Dump raw meminfo content for debugging
+    const QByteArray rawMem = memFile.readAll();
+    memFile.seek(0);
     QTextStream stream(&memFile);
-    qint64 memTotal = -1;
-    qint64 memAvailable = -1;
-    qint64 memFree = -1;
-    qint64 buffers = 0;
-    qint64 cached = 0;
+    QFile rawDbg("/tmp/wintaskman_meminfo_raw.log");
+    if (rawDbg.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+      rawDbg.write(rawMem);
+      rawDbg.close();
+    }
 
     while (!stream.atEnd())
     {
@@ -497,11 +510,36 @@ SystemUsage SystemDataProvider::readSystemUsage()
         buffers = value;
       else if (key == QLatin1String("Cached"))
         cached = value;
+      else if (key == QLatin1String("SReclaimable"))
+        sReclaimable = value;
+      else if (key == QLatin1String("Shmem"))
+        shmem = value;
 
       if (memTotal > 0 && memAvailable > 0)
         break;
     }
     memFile.close();
+
+    qDebug() << "meminfo parsed:" << "MemTotal=" << memTotal << "MemAvailable=" << memAvailable
+             << "MemFree=" << memFree << "Buffers=" << buffers << "Cached=" << cached
+             << "SReclaimable=" << sReclaimable << "Shmem=" << shmem;
+    QFile dbgFile("/tmp/wintaskman_meminfo_debug.log");
+    if (dbgFile.open(QIODevice::Append | QIODevice::Text))
+    {
+      QTextStream ts(&dbgFile);
+      ts << "meminfo parsed: MemTotal=" << memTotal << " MemAvailable=" << memAvailable
+         << " MemFree=" << memFree << " Buffers=" << buffers << " Cached=" << cached
+         << " SReclaimable=" << sReclaimable << " Shmem=" << shmem << "\n";
+      dbgFile.close();
+    }
+
+    if (memTotal <= 0)
+    {
+      const long pageSizeKb = sysconf(_SC_PAGESIZE) / 1024;
+      const long physPages = sysconf(_SC_PHYS_PAGES);
+      if (pageSizeKb > 0 && physPages > 0)
+        memTotal = static_cast<qint64>(physPages) * pageSizeKb;
+    }
 
     if (memTotal > 0)
     {
@@ -512,12 +550,42 @@ SystemUsage SystemDataProvider::readSystemUsage()
       }
       else if (memFree >= 0)
       {
-        const qint64 availableEstimate = memFree + buffers + cached;
+        qint64 availableEstimate = memFree + buffers + cached;
+        if (sReclaimable > 0)
+          availableEstimate += sReclaimable;
+        if (shmem > 0)
+          availableEstimate -= shmem;
         usage.ramUsage = qMax<qint64>(0, memTotal - availableEstimate);
       }
     }
 
     qDebug() << "readSystemUsage:" << usage.totalRam << "kB total," << usage.ramUsage << "kB used";
+  }
+
+  // Use sysinfo() when available as a reliable source for total/free RAM. Prefer MemAvailable if parsed.
+  struct sysinfo si;
+  if (sysinfo(&si) == 0)
+  {
+    const qint64 totalKb_sys = (static_cast<qint64>(si.totalram) * si.mem_unit) / 1024;
+    const qint64 freeKb_sys = (static_cast<qint64>(si.freeram) * si.mem_unit) / 1024;
+    // Ensure totalRam is set
+    if (usage.totalRam <= 0)
+      usage.totalRam = totalKb_sys;
+
+    // Prefer MemAvailable-based usage when available, otherwise use sysinfo values
+    if (memAvailable > 0 && memTotal > 0)
+      usage.ramUsage = memTotal - memAvailable;
+    else
+      usage.ramUsage = qMax<qint64>(0, usage.totalRam - freeKb_sys);
+
+    qDebug() << "sysinfo primary: totalKb" << totalKb_sys << "freeKb" << freeKb_sys << "usedKb" << usage.ramUsage;
+    QFile dbgFile2("/tmp/wintaskman_meminfo_debug.log");
+    if (dbgFile2.open(QIODevice::Append | QIODevice::Text))
+    {
+      QTextStream ts(&dbgFile2);
+      ts << "sysinfo primary: totalKb=" << totalKb_sys << " freeKb=" << freeKb_sys << " usedKb=" << usage.ramUsage << "\n";
+      dbgFile2.close();
+    }
   }
 
   return usage;
