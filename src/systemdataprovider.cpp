@@ -12,6 +12,7 @@
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTextStream>
 #include <QDateTime>
 #include <functional>
@@ -157,29 +158,74 @@ QList<ProcessInfo> SystemDataProvider::refreshProcessList(bool includeAllUsers)
   return processList;
 }
 
+static QList<ServiceInfo> parseOpenRCServices(const QByteArray &output)
+{
+  QList<ServiceInfo> services;
+  const QStringList lines = QString::fromUtf8(output).split('\n', Qt::SkipEmptyParts);
+  const QRegularExpression serviceLineRegex(R"(^\s*([^\s\[]+)\s+\[\s*([^\]]+)\s*\])");
+
+  for (const QString &line : lines)
+  {
+    const QRegularExpressionMatch match = serviceLineRegex.match(line);
+    if (!match.hasMatch())
+      continue;
+
+    ServiceInfo service;
+    service.name = match.captured(1);
+    service.pid = "-";
+    service.description = QString();
+    service.state = match.captured(2).trimmed();
+    services.append(service);
+  }
+
+  return services;
+}
+
 QList<ServiceInfo> SystemDataProvider::refreshServices()
 {
   QList<ServiceInfo> services;
   QProcess process;
-  process.setProgram("systemctl");
-  process.setArguments({"--user", "list-units", "--type=service", "--all", "--output=json"});
-  process.start();
-  process.waitForFinished();
+  const QString systemctlPath = QStandardPaths::findExecutable("systemctl");
 
-  const QByteArray output = process.readAllStandardOutput();
-  const QJsonDocument document = QJsonDocument::fromJson(output);
-  if (!document.isArray())
-    return services;
-
-  for (const QJsonValue &value : document.array())
+  if (!systemctlPath.isEmpty())
   {
-    const QJsonObject serviceObject = value.toObject();
-    ServiceInfo service;
-    service.name = serviceObject.value("unit").toString();
-    service.pid = serviceObject.contains("mainPID") ? QString::number(serviceObject.value("mainPID").toInt()) : "-";
-    service.description = serviceObject.value("description").toString();
-    service.state = serviceObject.value("active").toString();
-    services.append(service);
+    process.setProgram(systemctlPath);
+    process.setArguments({"--user", "list-units", "--type=service", "--all", "--output=json"});
+    process.start();
+    process.waitForFinished();
+
+    const QByteArray output = process.readAllStandardOutput();
+    const QJsonDocument document = QJsonDocument::fromJson(output);
+    if (document.isArray())
+    {
+      for (const QJsonValue &value : document.array())
+      {
+        const QJsonObject serviceObject = value.toObject();
+        ServiceInfo service;
+        service.name = serviceObject.value("unit").toString();
+        service.pid = serviceObject.contains("mainPID") ? QString::number(serviceObject.value("mainPID").toInt()) : "-";
+        service.description = serviceObject.value("description").toString();
+        service.state = serviceObject.value("active").toString();
+        services.append(service);
+      }
+
+      return services;
+    }
+  }
+
+  const QString rcStatusPath = QStandardPaths::findExecutable("rc-status");
+  if (!rcStatusPath.isEmpty())
+  {
+    process.setProgram(rcStatusPath);
+    process.setArguments({"--all"});
+    process.start();
+    process.waitForFinished();
+
+    if (process.exitStatus() == QProcess::NormalExit)
+    {
+      services = parseOpenRCServices(process.readAllStandardOutput());
+      return services;
+    }
   }
 
   return services;
