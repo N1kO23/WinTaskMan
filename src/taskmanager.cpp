@@ -9,6 +9,8 @@
 #include <QColor>
 #include <QAbstractAxis>
 #include <QMenuBar>
+#include <QPainter>
+#include <QSizePolicy>
 #include <QProcess>
 #include <QPushButton>
 #include <QStatusBar>
@@ -84,7 +86,19 @@ void TaskManager::createMenus()
             if (m_coreScrollArea)
               m_coreScrollArea->setVisible(checked);
             if (m_cpuChartView)
-              m_cpuChartView->setVisible(!checked); });
+              m_cpuChartView->setVisible(!checked);
+            if (checked && m_coreScrollArea && m_coreScrollArea->widget())
+            {
+              m_coreScrollArea->widget()->adjustSize();
+              m_coreScrollArea->widget()->resize(m_coreScrollArea->widget()->sizeHint());
+              m_coreScrollArea->widget()->updateGeometry();
+              m_coreScrollArea->update();
+              for (QChartView *view : m_coreChartViews)
+              {
+                view->chart()->update();
+                view->update();
+              }
+            } });
   viewMenu->addAction("Show history for all processes", this, []() {})->setCheckable(true);
 
   helpMenu->addAction("Help topics", this, &TaskManager::openHelp);
@@ -228,6 +242,8 @@ void TaskManager::createPerformanceChart()
   m_coreScrollArea = new QScrollArea();
   m_coreScrollArea->setWidgetResizable(true);
   m_coreScrollArea->setWidget(m_coreContainerWidget);
+  m_coreScrollArea->setMinimumHeight(180);
+  m_coreScrollArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
   // Compose performance tab
   QWidget *performanceTab = new QWidget(this);
@@ -305,17 +321,23 @@ void TaskManager::updateGraphs()
     chart->addSeries(series);
     chart->legend()->hide();
     chart->setBackgroundBrush(QBrush(Qt::black));
+    chart->setPlotAreaBackgroundVisible(true);
+    chart->setPlotAreaBackgroundBrush(QBrush(Qt::black));
     QValueAxis *axisX = new QValueAxis();
     QValueAxis *axisY = new QValueAxis();
     axisX->setRange(0, 60);
     axisY->setRange(0, 100);
+    axisX->setGridLinePen(QPen(Qt::darkGreen));
+    axisY->setGridLinePen(QPen(Qt::darkGreen));
     chart->addAxis(axisX, Qt::AlignBottom);
     chart->addAxis(axisY, Qt::AlignLeft);
     series->attachAxis(axisX);
     series->attachAxis(axisY);
 
     QChartView *view = new QChartView(chart);
+    view->setRenderHint(QPainter::Antialiasing);
     view->setMinimumHeight(80);
+    view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     const int cols = 4;
     const int row = idx / cols;
@@ -371,6 +393,11 @@ void TaskManager::updateGraphs()
     const bool showIndividual = m_graphSummaryAction->isChecked();
     m_coreScrollArea->setVisible(showIndividual);
     m_cpuChartView->setVisible(!showIndividual);
+    if (showIndividual && m_coreScrollArea->widget())
+    {
+      m_coreScrollArea->widget()->adjustSize();
+      m_coreScrollArea->widget()->updateGeometry();
+    }
   }
 
   // refresh views
