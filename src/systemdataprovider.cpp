@@ -158,6 +158,30 @@ QList<ProcessInfo> SystemDataProvider::refreshProcessList(bool includeAllUsers)
   return processList;
 }
 
+static QString findOpenRCPidFromPidFiles(const QString &serviceName)
+{
+  static const QStringList pidLocations = {
+      QStringLiteral("/run/%1.pid"),
+      QStringLiteral("/var/run/%1.pid"),
+      QStringLiteral("/run/%1/%1.pid"),
+      QStringLiteral("/var/run/%1/%1.pid")};
+
+  for (const QString &templatePath : pidLocations)
+  {
+    const QString path = templatePath.arg(serviceName);
+    QFile pidFile(path);
+    if (!pidFile.exists() || !pidFile.open(QIODevice::ReadOnly | QIODevice::Text))
+      continue;
+
+    const QString pidLine = QString::fromUtf8(pidFile.readLine()).trimmed();
+    const int pid = pidLine.toInt();
+    if (pid > 0)
+      return QString::number(pid);
+  }
+
+  return QStringLiteral("-");
+}
+
 static QList<ServiceInfo> parseOpenRCServices(const QByteArray &output)
 {
   QList<ServiceInfo> services;
@@ -172,9 +196,9 @@ static QList<ServiceInfo> parseOpenRCServices(const QByteArray &output)
 
     ServiceInfo service;
     service.name = match.captured(1);
-    service.pid = "-";
-    service.description = QString();
     service.state = match.captured(2).trimmed();
+    service.description = QString();
+    service.pid = service.state.compare(QStringLiteral("started"), Qt::CaseInsensitive) == 0 ? findOpenRCPidFromPidFiles(service.name) : QStringLiteral("-");
     services.append(service);
   }
 
