@@ -1,10 +1,14 @@
+#include "ui/mainwindow.h"
+
 #include <QApplication>
-#include "taskmanager.h"
+#include <QIcon>
 
 int main(int argc, char *argv[])
 {
-    QApplication app(argc, argv);
-    TaskManager taskManager;
-    taskManager.show();
-    return app.exec();
+  QApplication app(argc, argv);
+  QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/taskmgr.ico")));
+
+  MainWindow window;
+  window.show();
+  return app.exec();
 }

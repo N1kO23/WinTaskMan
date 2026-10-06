@@ -10,6 +10,8 @@ If you want to have the Aero theme as seen in the screenshot, take a look into [
 ## Building
 To build the program you need cmake, qt6 base and qt6charts. These should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
 
+When Qt Test is installed (it comes with qt6 base on Arch and Ubuntu), the unit tests are built too. Run them with `ctest --test-dir build`.
+
 To install the dependencies on Arch:
 ```
 sudo pacman -S cmake qt6-base qt6-charts
@@ -27,6 +29,7 @@ sudo apt install cmake qt6-base-dev libqt6charts6-dev
 - Per process CPU usage
 - Total CPU usage
 - Total process count
+- CPU (total or per core) and memory usage history graphs
 
 ### What is missing
 - Network tab contents as a whole
@@ -36,6 +39,5 @@ sudo apt install cmake qt6-base-dev libqt6charts6-dev
 - Menubar actions
 
 ### Known bugs
-- Total RAM usage treats cached memory as used
-- Individual core graphs are not displayed correctly
 - Styling can be a bit wacky
+- Service PIDs are not shown on systemd
