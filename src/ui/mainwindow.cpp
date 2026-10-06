@@ -16,6 +16,16 @@
 namespace
 {
 constexpr int kDefaultIntervalMs = 1000;
+
+QAction *addToggle(QMenu *menu, const QString &text, bool checked, QActionGroup *group = nullptr)
+{
+  QAction *action = menu->addAction(text);
+  action->setCheckable(true);
+  action->setChecked(checked);
+  if (group)
+    group->addAction(action);
+  return action;
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -35,12 +45,14 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::createTabs()
 {
+  m_applicationsPage = new ApplicationsPage(this);
+  m_processesPage = new ProcessesPage(this);
   m_performancePage = new PerformancePage(this);
 
   m_tabs = new QTabWidget(this);
   m_tabs->setContentsMargins(12, 12, 12, 12);
-  m_tabs->addTab(new ApplicationsPage(this), tr("Applications"));
-  m_tabs->addTab(new ProcessesPage(this), tr("Processes"));
+  m_tabs->addTab(m_applicationsPage, tr("Applications"));
+  m_tabs->addTab(m_processesPage, tr("Processes"));
   m_tabs->addTab(new ServicesPage(this), tr("Services"));
   m_tabs->addTab(m_performancePage, tr("Performance"));
   m_tabs->addTab(new QWidget(this), tr("Networking"));
@@ -52,40 +64,83 @@ void MainWindow::createTabs()
 
 void MainWindow::createMenus()
 {
-  QMenu *fileMenu = menuBar()->addMenu(tr("File"));
-  fileMenu->addAction(tr("Run new task"), QKeySequence(tr("Ctrl+N")), this, &MainWindow::runNewTask);
+  // The menus of the Windows 7 Task Manager, with its wording and defaults.
+  QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+  fileMenu->addAction(tr("&New Task (Run...)"), this, &MainWindow::runNewTask);
   fileMenu->addSeparator();
-  fileMenu->addAction(tr("Exit"), this, &QWidget::close);
+  fileMenu->addAction(tr("E&xit Task Manager"), this, &QWidget::close);
 
-  QMenu *viewMenu = menuBar()->addMenu(tr("View"));
-  viewMenu->addAction(tr("Refresh now"), QKeySequence(Qt::Key_F5), this, &MainWindow::refresh);
+  QMenu *optionsMenu = menuBar()->addMenu(tr("&Options"));
+  QAction *alwaysOnTop = addToggle(optionsMenu, tr("&Always On Top"), true);
+  setAlwaysOnTop(alwaysOnTop->isChecked());
+  connect(alwaysOnTop, &QAction::toggled, this, &MainWindow::setAlwaysOnTop);
+  // These act on Switch To and on the notification area icon, neither of which exists yet.
+  addToggle(optionsMenu, tr("&Minimize On Use"), false)->setEnabled(false);
+  addToggle(optionsMenu, tr("&Hide When Minimized"), false)->setEnabled(false);
 
-  QMenu *speedMenu = viewMenu->addMenu(tr("Update speed"));
+  QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+  viewMenu->addAction(tr("&Refresh Now"), QKeySequence(Qt::Key_F5), this, &MainWindow::refresh);
+
+  QMenu *speedMenu = viewMenu->addMenu(tr("&Update Speed"));
   auto *speedGroup = new QActionGroup(speedMenu);
   const auto addSpeed = [&](const QString &name, int intervalMs)
   {
-    QAction *action = speedMenu->addAction(name, this, [this, intervalMs] { setUpdateInterval(intervalMs); });
-    action->setCheckable(true);
-    action->setChecked(intervalMs == kDefaultIntervalMs);
-    speedGroup->addAction(action);
+    QAction *action = addToggle(speedMenu, name, intervalMs == kDefaultIntervalMs, speedGroup);
+    connect(action, &QAction::triggered, this, [this, intervalMs] { setUpdateInterval(intervalMs); });
   };
-  addSpeed(tr("High"), 500);
-  addSpeed(tr("Normal"), 1000);
-  addSpeed(tr("Low"), 2000);
-  addSpeed(tr("Paused"), 0);
-
+  addSpeed(tr("&High"), 500);
+  addSpeed(tr("&Normal"), 1000);
+  addSpeed(tr("&Low"), 2000);
+  addSpeed(tr("&Paused"), 0);
   viewMenu->addSeparator();
-  QAction *perCoreGraphs = viewMenu->addAction(tr("Individual core usage"));
-  perCoreGraphs->setCheckable(true);
-  connect(perCoreGraphs, &QAction::toggled, m_performancePage, &PerformancePage::setPerCoreGraphsVisible);
-  QAction *processHistory = viewMenu->addAction(tr("Show history for all processes"));
-  processHistory->setCheckable(true);
-  processHistory->setEnabled(false); // not implemented yet
 
-  QMenu *helpMenu = menuBar()->addMenu(tr("Help"));
-  helpMenu->addAction(tr("Help topics"))->setEnabled(false); // not implemented yet
+  // The rest of the View menu belongs to individual tabs.
+  auto *iconSizeGroup = new QActionGroup(viewMenu);
+  QAction *largeIcons = addToggle(viewMenu, tr("La&rge Icons"), false, iconSizeGroup);
+  QAction *smallIcons = addToggle(viewMenu, tr("S&mall Icons"), false, iconSizeGroup);
+  QAction *details = addToggle(viewMenu, tr("&Details"), true, iconSizeGroup);
+  largeIcons->setEnabled(false); // only the details view exists
+  smallIcons->setEnabled(false);
+
+  QAction *selectColumns = viewMenu->addAction(tr("&Select Columns..."));
+  selectColumns->setEnabled(false); // not implemented yet
+
+  QMenu *cpuHistoryMenu = viewMenu->addMenu(tr("&CPU History"));
+  auto *cpuHistoryGroup = new QActionGroup(cpuHistoryMenu);
+  addToggle(cpuHistoryMenu, tr("&One Graph, All CPUs"), false, cpuHistoryGroup);
+  QAction *graphPerCpu = addToggle(cpuHistoryMenu, tr("One Graph &Per CPU"), true, cpuHistoryGroup);
+  connect(graphPerCpu, &QAction::toggled, m_performancePage, &PerformancePage::setPerCoreGraphsVisible);
+  QAction *kernelTimes = addToggle(viewMenu, tr("Show &Kernel Times"), false);
+  connect(kernelTimes, &QAction::toggled, m_performancePage, &PerformancePage::setKernelTimesVisible);
+
+  m_tabViewActions = {{m_applicationsPage, {largeIcons, smallIcons, details}},
+                      {m_processesPage, {selectColumns}},
+                      {m_performancePage, {cpuHistoryMenu->menuAction(), kernelTimes}}};
+  connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::updateViewMenu);
+  updateViewMenu();
+
+  QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+  helpMenu->addAction(tr("&View Help"))->setEnabled(false); // not implemented yet
   helpMenu->addSeparator();
-  helpMenu->addAction(tr("About Task Manager"), this, &MainWindow::showAbout);
+  helpMenu->addAction(tr("&About Task Manager"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::updateViewMenu()
+{
+  for (auto tab = m_tabViewActions.cbegin(); tab != m_tabViewActions.cend(); ++tab)
+  {
+    for (QAction *action : tab.value())
+      action->setVisible(tab.key() == m_tabs->currentWidget());
+  }
+}
+
+void MainWindow::setAlwaysOnTop(bool onTop)
+{
+  // Changing the flags of a shown window hides it, so show it again.
+  const bool visible = isVisible();
+  setWindowFlag(Qt::WindowStaysOnTopHint, onTop);
+  if (visible)
+    show();
 }
 
 void MainWindow::createStatusBar()

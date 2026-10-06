@@ -2,10 +2,23 @@
 
 #include <unistd.h>
 
+namespace
+{
+// How much a tick counter grew, as a percentage of the elapsed ticks.
+double percentOf(quint64 now, quint64 before, double elapsedTicks)
+{
+  return qBound(0.0, 100.0 * (double(now) - double(before)) / elapsedTicks, 100.0);
+}
+} // namespace
+
 SystemUsage SystemUsageTracker::update(const UsageSnapshot &snapshot)
 {
   SystemUsage usage;
+  usage.memory = snapshot.memory;
   usage.processCount = snapshot.processCount;
+  usage.threadCount = snapshot.threadCount;
+  usage.handleCount = snapshot.handleCount;
+  usage.uptimeSeconds = snapshot.uptimeSeconds;
   if (snapshot.memory.totalKb > 0)
     usage.memoryPercent = 100.0 * (snapshot.memory.totalKb - snapshot.memory.availableKb) / snapshot.memory.totalKb;
 
@@ -14,17 +27,26 @@ SystemUsage SystemUsageTracker::update(const UsageSnapshot &snapshot)
   for (int i = 0; i < snapshot.cpus.size(); ++i)
   {
     double percent = 0.0;
+    double kernelPercent = 0.0;
     const CpuTimes &now = snapshot.cpus[i];
     if (haveBaseline && now.total > m_previousCpus[i].total)
     {
-      const double busy = double(now.busy) - double(m_previousCpus[i].busy);
-      percent = qBound(0.0, 100.0 * busy / double(now.total - m_previousCpus[i].total), 100.0);
+      const CpuTimes &before = m_previousCpus[i];
+      const double elapsedTicks = double(now.total - before.total);
+      percent = percentOf(now.busy, before.busy, elapsedTicks);
+      kernelPercent = percentOf(now.kernel, before.kernel, elapsedTicks);
     }
 
     if (i == 0)
+    {
       usage.cpuPercent = percent;
+      usage.kernelPercent = kernelPercent;
+    }
     else
+    {
       usage.corePercents.append(percent);
+      usage.coreKernelPercents.append(kernelPercent);
+    }
   }
 
   m_previousCpus = snapshot.cpus;

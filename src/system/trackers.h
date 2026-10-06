@@ -10,9 +10,15 @@
 struct SystemUsage
 {
   double cpuPercent = 0.0;
+  double kernelPercent = 0.0; // the part of cpuPercent spent in the kernel
   QList<double> corePercents;
+  QList<double> coreKernelPercents;
   double memoryPercent = 0.0;
+  MemoryInfo memory;
   int processCount = 0;
+  int threadCount = 0;
+  qint64 handleCount = 0;
+  double uptimeSeconds = 0.0;
 };
 
 // Turns consecutive UsageSnapshots into percentages. CPU usage is measured between two

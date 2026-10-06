@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Concurrent Widgets Charts OPTIONAL_COMPONENTS Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Concurrent Widgets OPTIONAL_COMPONENTS Test)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra)
@@ -27,6 +27,7 @@ add_executable(WinTaskMan
   src/main.cpp
   src/ui/applicationspage.cpp src/ui/applicationspage.h
   src/ui/backgroundjob.h
+  src/ui/historygraph.cpp src/ui/historygraph.h
   src/ui/mainwindow.cpp src/ui/mainwindow.h
   src/ui/performancepage.cpp src/ui/performancepage.h
   src/ui/processespage.cpp src/ui/processespage.h
@@ -35,8 +36,9 @@ add_executable(WinTaskMan
   src/ui/servicespage.cpp src/ui/servicespage.h
   src/ui/tablemodel.cpp src/ui/tablemodel.h
   src/ui/tableview.cpp src/ui/tableview.h
+  src/ui/usagemeter.cpp src/ui/usagemeter.h
 )
-target_link_libraries(WinTaskMan PRIVATE wintaskman_system Qt6::Concurrent Qt6::Widgets Qt6::Charts)
+target_link_libraries(WinTaskMan PRIVATE wintaskman_system Qt6::Concurrent Qt6::Widgets)
 qt_add_resources(WinTaskMan icons
   PREFIX /
   BASE src/assets

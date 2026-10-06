@@ -5,10 +5,15 @@
 #include "system/procfs.h"
 #include "system/trackers.h"
 
+#include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QTimer>
 
+class ApplicationsPage;
 class PerformancePage;
+class ProcessesPage;
+class QAction;
 class QLabel;
 class QTabWidget;
 
@@ -23,6 +28,8 @@ private:
   void createTabs();
   void createMenus();
   void createStatusBar();
+  void updateViewMenu();
+  void setAlwaysOnTop(bool onTop);
 
   void refresh();
   void refreshCurrentPage();
@@ -32,7 +39,10 @@ private:
   void showAbout();
 
   QTabWidget *m_tabs = nullptr;
+  ApplicationsPage *m_applicationsPage = nullptr;
+  ProcessesPage *m_processesPage = nullptr;
   PerformancePage *m_performancePage = nullptr;
+  QHash<QWidget *, QList<QAction *>> m_tabViewActions; // View menu items shown only on that tab
   QLabel *m_processCountLabel = nullptr;
   QLabel *m_cpuUsageLabel = nullptr;
   QLabel *m_memoryUsageLabel = nullptr;

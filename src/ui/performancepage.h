@@ -1,13 +1,20 @@
 #pragma once
 
 #include <QList>
+#include <QPair>
 #include <QWidget>
 
-class QGridLayout;
+#include <functional>
+
+class HistoryGraph;
+class QGroupBox;
+class QLabel;
 class QStackedWidget;
+class UsageMeter;
 struct SystemUsage;
 
-// The Performance tab: CPU usage history as one graph or one per core, and memory usage history.
+// The Performance tab, laid out like the Windows 7 Task Manager's: CPU and memory meters next
+// to their usage history, with boxes of memory and system figures underneath.
 class PerformancePage : public QWidget
 {
   Q_OBJECT
@@ -17,15 +24,24 @@ public:
 
   void addSample(const SystemUsage &usage);
   void setPerCoreGraphsVisible(bool visible);
+  void setKernelTimesVisible(bool visible);
 
 private:
-  class UsageGraph;
+  using StatValue = std::function<QString(const SystemUsage &)>;
 
-  void setCoreCount(int count);
+  struct Stat
+  {
+    QLabel *label;
+    StatValue value;
+  };
 
-  QStackedWidget *m_cpuStack = nullptr;
-  UsageGraph *m_cpuGraph = nullptr;
-  QGridLayout *m_coreGrid = nullptr;
-  QList<UsageGraph *> m_coreGraphs;
-  UsageGraph *m_memoryGraph = nullptr;
+  QGroupBox *createStatsBox(const QString &title, const QList<QPair<QString, StatValue>> &rows);
+
+  UsageMeter *m_cpuMeter = nullptr;
+  QStackedWidget *m_cpuHistoryStack = nullptr;
+  HistoryGraph *m_cpuHistory = nullptr;  // all CPUs in one graph
+  HistoryGraph *m_coreHistory = nullptr; // one graph per CPU
+  UsageMeter *m_memoryMeter = nullptr;
+  HistoryGraph *m_memoryHistory = nullptr;
+  QList<Stat> m_stats;
 };

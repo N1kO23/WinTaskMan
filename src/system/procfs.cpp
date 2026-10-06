@@ -30,13 +30,16 @@ UsageSnapshot readUsageSnapshot()
   snapshot.cpus = parseCpuTimes(readProcFile(QStringLiteral("/proc/stat")));
   snapshot.memory = parseMemInfo(readProcFile(QStringLiteral("/proc/meminfo")));
   snapshot.processCount = listPids().size();
+  snapshot.threadCount = parseThreadCount(readProcFile(QStringLiteral("/proc/loadavg")));
+  snapshot.handleCount = parseHandleCount(readProcFile(QStringLiteral("/proc/sys/fs/file-nr")));
+  snapshot.uptimeSeconds = parseUptime(readProcFile(QStringLiteral("/proc/uptime")));
   return snapshot;
 }
 
 ProcessSnapshot readProcessSnapshot()
 {
   ProcessSnapshot snapshot;
-  snapshot.uptimeSeconds = readProcFile(QStringLiteral("/proc/uptime")).split(' ').value(0).toDouble();
+  snapshot.uptimeSeconds = parseUptime(readProcFile(QStringLiteral("/proc/uptime")));
 
   const qint64 pageSizeKb = sysconf(_SC_PAGESIZE) / 1024;
   QHash<uint, QString> userNames;
@@ -110,29 +113,58 @@ QList<CpuTimes> parseCpuTimes(const QByteArray &procStat)
     for (int i = 1; i < qMin<int>(fields.size(), 9); ++i)
       total += fields[i].toULongLong();
     const quint64 idle = fields[4].toULongLong() + fields.value(5).toULongLong();
-    cpus.append({total - idle, total});
+    const quint64 kernel = fields[3].toULongLong() + fields.value(6).toULongLong() + fields.value(7).toULongLong();
+    cpus.append({total - idle, kernel, total});
   }
   return cpus;
 }
 
 MemoryInfo parseMemInfo(const QByteArray &memInfo)
 {
+  static const QHash<QByteArray, qint64 MemoryInfo::*> fields = {
+      {"MemTotal", &MemoryInfo::totalKb},
+      {"MemAvailable", &MemoryInfo::availableKb},
+      {"MemFree", &MemoryInfo::freeKb},
+      {"Buffers", &MemoryInfo::buffersKb},
+      {"Cached", &MemoryInfo::cachedKb},
+      {"SReclaimable", &MemoryInfo::reclaimableSlabKb},
+      {"SUnreclaim", &MemoryInfo::unreclaimableSlabKb},
+      {"KernelStack", &MemoryInfo::kernelStackKb},
+      {"PageTables", &MemoryInfo::pageTablesKb},
+      {"Committed_AS", &MemoryInfo::committedKb},
+      {"CommitLimit", &MemoryInfo::commitLimitKb}};
+
   MemoryInfo info;
   for (const QByteArray &line : memInfo.split('\n'))
   {
     // "MemTotal:       16318444 kB"
     const int colon = line.indexOf(':');
-    if (colon < 0)
+    const auto field = fields.constFind(line.left(colon));
+    if (colon < 0 || field == fields.constEnd())
       continue;
 
-    const QByteArray key = line.left(colon);
-    const qint64 valueKb = line.mid(colon + 1).simplified().split(' ').value(0).toLongLong();
-    if (key == "MemTotal")
-      info.totalKb = valueKb;
-    else if (key == "MemAvailable")
-      info.availableKb = valueKb;
+    info.*(*field) = line.mid(colon + 1).simplified().split(' ').value(0).toLongLong();
   }
   return info;
+}
+
+double parseUptime(const QByteArray &uptime)
+{
+  // "<seconds since boot> <idle seconds>"
+  return uptime.split(' ').value(0).toDouble();
+}
+
+int parseThreadCount(const QByteArray &loadAvg)
+{
+  // "0.50 0.40 0.30 <runnable>/<total> <last pid>"; the total counts every thread.
+  const QByteArray entities = loadAvg.simplified().split(' ').value(3);
+  return entities.mid(entities.indexOf('/') + 1).toInt();
+}
+
+qint64 parseHandleCount(const QByteArray &fileNr)
+{
+  // "<allocated> <free> <maximum>"
+  return fileNr.simplified().split(' ').value(0).toLongLong();
 }
 
 std::optional<ProcessStat> parseProcessStat(const QByteArray &stat)

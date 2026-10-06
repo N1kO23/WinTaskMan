@@ -8,18 +8,18 @@ A Work-In-Progress program to bring the old-fashioned task manager to linux usin
 If you want to have the Aero theme as seen in the screenshot, take a look into [wackyideas/aerothemeplasma](https://gitgud.io/wackyideas/aerothemeplasma)
 
 ## Building
-To build the program you need cmake, qt6 base and qt6charts. These should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
+To build the program you need cmake and qt6 base. These should be available on all rolling release distros as well as on the latest Ubuntu. To build the program, simply run the `build.sh` script to streamline the process and compiled binary will be found from `build/` directory
 
 When Qt Test is installed (it comes with qt6 base on Arch and Ubuntu), the unit tests are built too. Run them with `ctest --test-dir build`.
 
 To install the dependencies on Arch:
 ```
-sudo pacman -S cmake qt6-base qt6-charts
+sudo pacman -S cmake qt6-base
 ```
 
 To install the dependencies on Ubuntu:
 ```
-sudo apt install cmake qt6-base-dev libqt6charts6-dev
+sudo apt install cmake qt6-base-dev
 ```
 
 ### What works
@@ -29,11 +29,10 @@ sudo apt install cmake qt6-base-dev libqt6charts6-dev
 - Per process CPU usage
 - Total CPU usage
 - Total process count
-- CPU (total or per core) and memory usage history graphs
+- Performance tab in the Windows 7 style: CPU and memory meters and history graphs (total or per core, with kernel times), memory and system figures
 
 ### What is missing
 - Network tab contents as a whole
-- Performance tab contents mostly missing
 - User tab contents as whole
 - Control buttons from all tabs
 - Menubar actions

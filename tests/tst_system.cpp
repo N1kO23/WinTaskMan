@@ -12,6 +12,7 @@ class TestSystem : public QObject
 private slots:
   void parsesCpuTimes();
   void parsesMemInfo();
+  void parsesUptimeThreadsAndHandles();
   void parsesProcessStat();
   void rejectsMalformedProcessStat();
   void parsesStatusUid();
@@ -37,10 +38,13 @@ void TestSystem::parsesCpuTimes()
   // Total excludes guest time, which is already counted in user and nice; idle includes iowait.
   QCOMPARE(cpus[0].total, quint64(1030));
   QCOMPARE(cpus[0].busy, quint64(180));
+  QCOMPARE(cpus[0].kernel, quint64(45)); // system + irq + softirq
   QCOMPARE(cpus[1].total, quint64(500));
   QCOMPARE(cpus[1].busy, quint64(90));
+  QCOMPARE(cpus[1].kernel, quint64(20));
   QCOMPARE(cpus[2].total, quint64(530));
   QCOMPARE(cpus[2].busy, quint64(90));
+  QCOMPARE(cpus[2].kernel, quint64(25));
 
   QVERIFY(parseCpuTimes(QByteArray()).isEmpty());
 }
@@ -51,11 +55,39 @@ void TestSystem::parsesMemInfo()
                              "MemFree:         1018276 kB\n"
                              "MemAvailable:    9876543 kB\n"
                              "Buffers:          123456 kB\n"
-                             "Cached:          7654321 kB\n";
+                             "Cached:          7654321 kB\n"
+                             "SwapCached:         1024 kB\n"
+                             "SReclaimable:     562356 kB\n"
+                             "SUnreclaim:       424140 kB\n"
+                             "KernelStack:       41904 kB\n"
+                             "PageTables:       128468 kB\n"
+                             "CommitLimit:    49543528 kB\n"
+                             "Committed_AS:   31193348 kB\n"
+                             "HugePages_Total:       0\n";
 
   const MemoryInfo info = parseMemInfo(memInfo);
   QCOMPARE(info.totalKb, qint64(16318444));
   QCOMPARE(info.availableKb, qint64(9876543));
+  QCOMPARE(info.freeKb, qint64(1018276));
+  QCOMPARE(info.buffersKb, qint64(123456));
+  QCOMPARE(info.cachedKb, qint64(7654321)); // not SwapCached
+  QCOMPARE(info.reclaimableSlabKb, qint64(562356));
+  QCOMPARE(info.unreclaimableSlabKb, qint64(424140));
+  QCOMPARE(info.kernelStackKb, qint64(41904));
+  QCOMPARE(info.pageTablesKb, qint64(128468));
+  QCOMPARE(info.committedKb, qint64(31193348));
+  QCOMPARE(info.commitLimitKb, qint64(49543528));
+}
+
+void TestSystem::parsesUptimeThreadsAndHandles()
+{
+  QCOMPARE(parseUptime("18503.08 431216.28\n"), 18503.08);
+  QCOMPARE(parseThreadCount("2.02 1.82 1.65 1/2596 219514\n"), 2596);
+  QCOMPARE(parseHandleCount("19015\t0\t3183594\n"), qint64(19015));
+
+  QCOMPARE(parseUptime(QByteArray()), 0.0);
+  QCOMPARE(parseThreadCount(QByteArray()), 0);
+  QCOMPARE(parseHandleCount(QByteArray()), qint64(0));
 }
 
 void TestSystem::parsesProcessStat()
@@ -104,24 +136,37 @@ void TestSystem::tracksSystemUsage()
   SystemUsageTracker tracker;
 
   UsageSnapshot first;
-  first.cpus = {{100, 1000}, {50, 500}, {50, 500}};
-  first.memory = {1000, 250};
+  first.cpus = {{100, 40, 1000}, {50, 20, 500}, {50, 20, 500}}; // busy, kernel, total
+  first.memory.totalKb = 1000;
+  first.memory.availableKb = 250;
+  first.memory.freeKb = 100;
   first.processCount = 42;
+  first.threadCount = 300;
+  first.handleCount = 5000;
+  first.uptimeSeconds = 3600.0;
   const SystemUsage initial = tracker.update(first);
   QCOMPARE(initial.cpuPercent, 0.0); // no baseline yet
+  QCOMPARE(initial.kernelPercent, 0.0);
   QCOMPARE(initial.corePercents, QList<double>({0.0, 0.0}));
+  QCOMPARE(initial.coreKernelPercents, QList<double>({0.0, 0.0}));
   QCOMPARE(initial.memoryPercent, 75.0);
+  QCOMPARE(initial.memory.freeKb, qint64(100));
   QCOMPARE(initial.processCount, 42);
+  QCOMPARE(initial.threadCount, 300);
+  QCOMPARE(initial.handleCount, qint64(5000));
+  QCOMPARE(initial.uptimeSeconds, 3600.0);
 
   UsageSnapshot second = first;
-  second.cpus = {{150, 1200}, {90, 600}, {60, 600}};
+  second.cpus = {{150, 60, 1200}, {90, 30, 600}, {60, 25, 600}};
   const SystemUsage usage = tracker.update(second);
   QCOMPARE(usage.cpuPercent, 25.0);
+  QCOMPARE(usage.kernelPercent, 10.0);
   QCOMPARE(usage.corePercents, QList<double>({40.0, 10.0}));
+  QCOMPARE(usage.coreKernelPercents, QList<double>({10.0, 5.0}));
 
   // A different number of CPUs (hotplug) starts over.
   UsageSnapshot third = second;
-  third.cpus = {{200, 1400}, {100, 700}};
+  third.cpus = {{200, 70, 1400}, {100, 35, 700}};
   const SystemUsage restarted = tracker.update(third);
   QCOMPARE(restarted.cpuPercent, 0.0);
   QCOMPARE(restarted.corePercents, QList<double>({0.0}));
