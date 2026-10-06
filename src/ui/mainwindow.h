@@ -11,6 +11,7 @@
 #include <QTimer>
 
 class ApplicationsPage;
+class NetworkingPage;
 class PerformancePage;
 class ProcessesPage;
 class QAction;
@@ -28,7 +29,7 @@ private:
   void createTabs();
   void createMenus();
   void createStatusBar();
-  void updateViewMenu();
+  void updateTabMenus();
   void setAlwaysOnTop(bool onTop);
 
   void refresh();
@@ -42,7 +43,9 @@ private:
   ApplicationsPage *m_applicationsPage = nullptr;
   ProcessesPage *m_processesPage = nullptr;
   PerformancePage *m_performancePage = nullptr;
-  QHash<QWidget *, QList<QAction *>> m_tabViewActions; // View menu items shown only on that tab
+  NetworkingPage *m_networkingPage = nullptr;
+  QHash<QWidget *, QList<QAction *>> m_tabActions; // menu items shown only while that tab is open
+  bool m_networkingAlwaysActive = false;
   QLabel *m_processCountLabel = nullptr;
   QLabel *m_cpuUsageLabel = nullptr;
   QLabel *m_memoryUsageLabel = nullptr;

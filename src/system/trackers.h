@@ -1,5 +1,6 @@
 #pragma once
 
+#include "network.h"
 #include "procfs.h"
 
 #include <QHash>
@@ -60,4 +61,27 @@ private:
   int m_cpuCount;
   double m_previousUptime = 0.0;
   QHash<ProcessKey, quint64> m_previousCpuTicks;
+};
+
+struct NetworkUsage
+{
+  QString name;
+  bool connected = false;
+  qint64 linkSpeedMbps = 0;
+  // Shares of the link speed. Total can't exceed 100%, even on a full-duplex link.
+  double sentPercent = 0.0;
+  double receivedPercent = 0.0;
+  double totalPercent = 0.0;
+};
+
+// Turns consecutive NetworkSnapshots into link utilisation. An adapter seen for the first time,
+// or one whose link speed is unknown, reports 0%.
+class NetworkUsageTracker
+{
+public:
+  QList<NetworkUsage> update(const NetworkSnapshot &snapshot);
+
+private:
+  double m_previousUptime = 0.0;
+  QHash<QString, NetworkAdapter> m_previousAdapters;
 };

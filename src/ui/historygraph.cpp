@@ -1,5 +1,6 @@
 #include "historygraph.h"
 
+#include <QLocale>
 #include <QPainter>
 #include <QPolygon>
 
@@ -9,11 +10,15 @@
 namespace
 {
 // Sizes and colours measured from the Windows 7 Task Manager.
-constexpr int kGridSize = 12;
+constexpr int kGridColumnWidth = 12;
 constexpr int kSampleStep = 2;  // pixels between samples
 constexpr int kPlotSpacing = 8; // between the plots of a multi-plot graph
+constexpr int kScaleGap = 5;    // between the scale's labels and its axis
 const QColor kGridColor(0x00, 0x80, 0x40);
-const QColor kKernelColor(0xff, 0x00, 0x00);
+const QColor kScaleColor(0xff, 0xff, 0x00);
+
+// The vertical ranges auto zoom picks from, in percent.
+constexpr double kZoomLevels[] = {1, 5, 10, 25, 50, 100};
 
 // Splits `length` pixels into `count` equal parts with `spacing` between them and returns
 // where part `index` starts and ends.
@@ -23,31 +28,61 @@ QPair<int, int> span(int length, int count, int spacing, int index)
   const int end = ((index + 1) * (length + spacing)) / count - spacing;
   return {start, end};
 }
+
+QString percentText(double percent)
+{
+  return QLocale::system().toString(percent) + QLatin1String(" %");
+}
 } // namespace
 
-HistoryGraph::HistoryGraph(const QColor &lineColor, int lineWidth, QWidget *parent)
-    : QWidget(parent), m_lineColor(lineColor), m_lineWidth(lineWidth)
+HistoryGraph::HistoryGraph(QList<Series> series, QWidget *parent)
+    : QWidget(parent), m_series(std::move(series))
 {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
-void HistoryGraph::addSample(const QList<double> &values, const QList<double> &kernelValues)
+void HistoryGraph::addSample(const QList<QList<double>> &values)
 {
-  if (values.size() != m_plots.size())
-    m_plots = QList<Plot>(values.size());
+  const int plotCount = values.value(0).size();
+  if (plotCount != m_plots.size())
+    m_plots = QList<QList<History>>(plotCount, QList<History>(m_series.size(), History(kMaxSamples)));
 
-  for (int i = 0; i < m_plots.size(); ++i)
+  for (int plot = 0; plot < m_plots.size(); ++plot)
   {
-    m_plots[i].values.append(values[i]);
-    m_plots[i].kernelValues.append(kernelValues.value(i));
+    for (int series = 0; series < m_series.size(); ++series)
+      m_plots[plot][series].append(values.value(series).value(plot));
   }
   ++m_sampleCount;
   update();
 }
 
-void HistoryGraph::setKernelTimesVisible(bool visible)
+void HistoryGraph::clear()
 {
-  m_kernelTimesVisible = visible;
+  m_plots.clear();
+  update();
+}
+
+void HistoryGraph::setSeriesVisible(int series, bool visible)
+{
+  m_series[series].visible = visible;
+  update();
+}
+
+void HistoryGraph::setScaleVisible(bool visible)
+{
+  m_scaleVisible = visible;
+  update();
+}
+
+void HistoryGraph::setAutoZoom(bool autoZoom)
+{
+  m_autoZoom = autoZoom;
+  update();
+}
+
+void HistoryGraph::setGridRowHeight(int pixels)
+{
+  m_gridRowHeight = pixels;
   update();
 }
 
@@ -102,30 +137,74 @@ QList<QRect> HistoryGraph::plotRects() const
   return rects;
 }
 
-void HistoryGraph::paintPlot(QPainter &painter, const QRect &rect, const Plot *plot) const
+double HistoryGraph::rangeFor(const QList<History> *plot, int plotWidth) const
+{
+  if (!m_autoZoom)
+    return 100.0;
+
+  // The smallest zoom level that fits the visible part of every visible line.
+  double peak = 0.0;
+  const int visibleSamples = plotWidth / kSampleStep + 1;
+  for (int series = 0; plot && series < m_series.size(); ++series)
+  {
+    if (!m_series[series].visible)
+      continue;
+
+    const History &values = plot->at(series);
+    for (qsizetype i = values.lastIndex(); i >= qMax(values.firstIndex(), values.lastIndex() - visibleSamples); --i)
+      peak = qMax(peak, values.at(i));
+  }
+  for (const double level : kZoomLevels)
+  {
+    if (peak <= level)
+      return level;
+  }
+  return 100.0;
+}
+
+void HistoryGraph::paintPlot(QPainter &painter, QRect rect, const QList<History> *plot) const
 {
   painter.save();
-  painter.setClipRect(rect);
   painter.fillRect(rect, Qt::black);
 
-  // Horizontal grid lines hang from the top; vertical ones scroll left with the samples.
+  // With the scale shown, it takes a strip on the left and the plot gets the rest.
+  const int stripWidth = m_scaleVisible ? fontMetrics().horizontalAdvance(percentText(100)) + 2 * kScaleGap : 0;
+  const QRect strip(rect.left(), rect.top(), stripWidth, rect.height());
+  if (m_scaleVisible)
+    rect.setLeft(strip.right() + 2);
+  const double range = rangeFor(plot, rect.width());
+  if (m_scaleVisible)
+    paintScale(painter, strip, range);
+  painter.setClipRect(rect);
+
+  // Horizontal grid lines rise from the bottom; vertical ones scroll left with the samples.
   painter.setPen(kGridColor);
-  for (int y = rect.top() + kGridSize; y <= rect.bottom(); y += kGridSize)
+  for (int y = rect.bottom() - m_gridRowHeight; y >= rect.top(); y -= m_gridRowHeight)
     painter.drawLine(rect.left(), y, rect.right(), y);
-  const int scroll = static_cast<int>(m_sampleCount * kSampleStep % kGridSize);
-  for (int x = rect.right() - scroll; x >= rect.left(); x -= kGridSize)
+  const int scroll = static_cast<int>(m_sampleCount * kSampleStep % kGridColumnWidth);
+  for (int x = rect.right() - scroll; x >= rect.left(); x -= kGridColumnWidth)
     painter.drawLine(x, rect.top(), x, rect.bottom());
 
-  if (plot)
+  for (int series = 0; plot && series < m_series.size(); ++series)
   {
-    paintLine(painter, rect, plot->values, QPen(m_lineColor, m_lineWidth));
-    if (m_kernelTimesVisible)
-      paintLine(painter, rect, plot->kernelValues, QPen(kKernelColor, 1));
+    if (m_series[series].visible)
+      paintLine(painter, rect, plot->at(series), range, QPen(m_series[series].color, m_series[series].lineWidth));
   }
   painter.restore();
 }
 
-void HistoryGraph::paintLine(QPainter &painter, const QRect &rect, const QContiguousCache<double> &values,
+void HistoryGraph::paintScale(QPainter &painter, const QRect &strip, double range) const
+{
+  // Labels for the top, middle and bottom of the range, right-aligned against a yellow axis.
+  painter.setPen(kScaleColor);
+  painter.drawLine(strip.right() + 1, strip.top(), strip.right() + 1, strip.bottom());
+  const QRect labels = strip.adjusted(0, 0, -kScaleGap, 0);
+  painter.drawText(labels, Qt::AlignRight | Qt::AlignTop, percentText(range));
+  painter.drawText(labels, Qt::AlignRight | Qt::AlignVCenter, percentText(range / 2));
+  painter.drawText(labels, Qt::AlignRight | Qt::AlignBottom, percentText(0));
+}
+
+void HistoryGraph::paintLine(QPainter &painter, const QRect &rect, const History &values, double range,
                              const QPen &pen) const
 {
   // The newest sample sits on the right edge, each older one kSampleStep pixels further left.
@@ -133,7 +212,7 @@ void HistoryGraph::paintLine(QPainter &painter, const QRect &rect, const QContig
   int x = rect.right();
   for (qsizetype i = values.lastIndex(); i >= values.firstIndex() && x > rect.left() - kSampleStep; --i)
   {
-    const double fraction = qBound(0.0, values.at(i), 100.0) / 100.0;
+    const double fraction = qBound(0.0, values.at(i) / range, 1.0);
     points.append(QPoint(x, rect.bottom() - qRound(fraction * (rect.height() - 1))));
     x -= kSampleStep;
   }

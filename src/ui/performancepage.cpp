@@ -14,7 +14,15 @@
 namespace
 {
 const QColor kCpuLineColor(0x00, 0xff, 0x00);
+const QColor kKernelLineColor(0xff, 0x00, 0x00);
 const QColor kMemoryLineColor(0x00, 0x80, 0xff);
+
+// CPU graphs draw total use, and kernel time when it's shown.
+constexpr int kKernelSeries = 1;
+QList<HistoryGraph::Series> cpuSeries()
+{
+  return {{kCpuLineColor}, {kKernelLineColor, 1, false}};
+}
 
 QGroupBox *createBox(const QString &title, QWidget *content)
 {
@@ -54,10 +62,10 @@ PerformancePage::PerformancePage(QWidget *parent)
     : QWidget(parent),
       m_cpuMeter(new UsageMeter(this)),
       m_cpuHistoryStack(new QStackedWidget(this)),
-      m_cpuHistory(new HistoryGraph(kCpuLineColor, 1, this)),
-      m_coreHistory(new HistoryGraph(kCpuLineColor, 1, this)),
+      m_cpuHistory(new HistoryGraph(cpuSeries(), this)),
+      m_coreHistory(new HistoryGraph(cpuSeries(), this)),
       m_memoryMeter(new UsageMeter(this)),
-      m_memoryHistory(new HistoryGraph(kMemoryLineColor, 2, this))
+      m_memoryHistory(new HistoryGraph({{kMemoryLineColor, 2}}, this))
 {
   m_cpuHistoryStack->addWidget(m_cpuHistory);
   m_cpuHistoryStack->addWidget(m_coreHistory);
@@ -119,11 +127,11 @@ PerformancePage::PerformancePage(QWidget *parent)
 void PerformancePage::addSample(const SystemUsage &usage)
 {
   m_cpuMeter->setValue(usage.cpuPercent, tr("%1 %").arg(qRound(usage.cpuPercent)));
-  m_cpuHistory->addSample({usage.cpuPercent}, {usage.kernelPercent});
-  m_coreHistory->addSample(usage.corePercents, usage.coreKernelPercents);
+  m_cpuHistory->addSample({{usage.cpuPercent}, {usage.kernelPercent}});
+  m_coreHistory->addSample({usage.corePercents, usage.coreKernelPercents});
 
   m_memoryMeter->setValue(usage.memoryPercent, memorySize(usage.memory.totalKb - usage.memory.availableKb));
-  m_memoryHistory->addSample({usage.memoryPercent});
+  m_memoryHistory->addSample({{usage.memoryPercent}});
 
   for (const Stat &stat : std::as_const(m_stats))
     stat.label->setText(stat.value(usage));
@@ -136,8 +144,8 @@ void PerformancePage::setPerCoreGraphsVisible(bool visible)
 
 void PerformancePage::setKernelTimesVisible(bool visible)
 {
-  m_cpuHistory->setKernelTimesVisible(visible);
-  m_coreHistory->setKernelTimesVisible(visible);
+  m_cpuHistory->setSeriesVisible(kKernelSeries, visible);
+  m_coreHistory->setSeriesVisible(kKernelSeries, visible);
 }
 
 QGroupBox *PerformancePage::createStatsBox(const QString &title, const QList<QPair<QString, StatValue>> &rows)

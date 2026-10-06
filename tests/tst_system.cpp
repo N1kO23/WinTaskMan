@@ -1,4 +1,5 @@
 #include "system/applications.h"
+#include "system/network.h"
 #include "system/procfs.h"
 #include "system/services.h"
 #include "system/trackers.h"
@@ -19,6 +20,8 @@ private slots:
   void parsesCmdline();
   void tracksSystemUsage();
   void tracksProcessUsage();
+  void parsesAdapterState();
+  void tracksNetworkUsage();
   void parsesSystemdUnits();
   void parsesOpenRcStatus();
   void parsesXlsclients();
@@ -210,6 +213,62 @@ void TestSystem::tracksProcessUsage()
   QCOMPARE(processes[0].memoryKb, qint64(2048));
   QCOMPARE(processes[1].cpuPercent, 0.0);
   QCOMPARE(processes[2].cpuPercent, 0.0);
+}
+
+void TestSystem::parsesAdapterState()
+{
+  QVERIFY(isAdapterConnected("up\n", "1\n"));
+  QVERIFY(!isAdapterConnected("down\n", "0\n"));
+  QVERIFY(!isAdapterConnected("dormant\n", "1\n")); // Wi-Fi still authenticating
+  QVERIFY(isAdapterConnected("unknown\n", "1\n"));
+  QVERIFY(!isAdapterConnected("unknown\n", ""));
+
+  QCOMPARE(parseNmcliSpeed("1000 Mb/s\n"), qint64(1000));
+  QCOMPARE(parseNmcliSpeed("866 Mb/s\n"), qint64(866));
+  QCOMPARE(parseNmcliSpeed("unknown\n"), qint64(0));
+  QCOMPARE(parseNmcliSpeed(QByteArray()), qint64(0));
+}
+
+void TestSystem::tracksNetworkUsage()
+{
+  NetworkUsageTracker tracker;
+  const auto adapter = [](const QString &name, qint64 mbps, quint64 received, quint64 sent)
+  {
+    NetworkAdapter result;
+    result.name = name;
+    result.connected = mbps > 0;
+    result.linkSpeedMbps = mbps;
+    result.bytesReceived = received;
+    result.bytesSent = sent;
+    return result;
+  };
+
+  NetworkSnapshot first;
+  first.uptimeSeconds = 100.0;
+  first.adapters = {adapter("eth0", 100, 1'000'000, 500'000), adapter("wlan0", 0, 0, 0)};
+  for (const NetworkUsage &usage : tracker.update(first))
+    QCOMPARE(usage.totalPercent, 0.0); // first sighting
+
+  // A 100 Mbps link moves 12.5 MB per second; over 2 seconds that is 25 MB.
+  NetworkSnapshot second;
+  second.uptimeSeconds = 102.0;
+  second.adapters = {adapter("eth0", 100, 1'000'000 + 5'000'000, 500'000 + 2'500'000), adapter("wlan0", 0, 10, 10)};
+  const QList<NetworkUsage> usages = tracker.update(second);
+  QCOMPARE(usages.size(), 2);
+  QCOMPARE(usages[0].name, QStringLiteral("eth0"));
+  QCOMPARE(usages[0].receivedPercent, 20.0);
+  QCOMPARE(usages[0].sentPercent, 10.0);
+  QCOMPARE(usages[0].totalPercent, 30.0);
+  QCOMPARE(usages[0].linkSpeedMbps, qint64(100));
+  QVERIFY(usages[0].connected);
+  QCOMPARE(usages[1].totalPercent, 0.0); // unknown link speed
+  QVERIFY(!usages[1].connected);
+
+  // Counters that went backwards (the driver reset them) count as no traffic.
+  NetworkSnapshot third;
+  third.uptimeSeconds = 103.0;
+  third.adapters = {adapter("eth0", 100, 0, 0)};
+  QCOMPARE(tracker.update(third).value(0).totalPercent, 0.0);
 }
 
 void TestSystem::parsesSystemdUnits()

@@ -15,6 +15,7 @@ endif()
 # Needs only Qt Core, so the unit tests can link it without the UI.
 add_library(wintaskman_system STATIC
   src/system/applications.cpp src/system/applications.h
+  src/system/network.cpp src/system/network.h
   src/system/procfs.cpp src/system/procfs.h
   src/system/runtool.cpp src/system/runtool.h
   src/system/services.cpp src/system/services.h
@@ -29,6 +30,7 @@ add_executable(WinTaskMan
   src/ui/backgroundjob.h
   src/ui/historygraph.cpp src/ui/historygraph.h
   src/ui/mainwindow.cpp src/ui/mainwindow.h
+  src/ui/networkingpage.cpp src/ui/networkingpage.h
   src/ui/performancepage.cpp src/ui/performancepage.h
   src/ui/processespage.cpp src/ui/processespage.h
   src/ui/refreshablepage.h

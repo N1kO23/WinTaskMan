@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "applicationspage.h"
+#include "networkingpage.h"
 #include "performancepage.h"
 #include "processespage.h"
 #include "refreshablepage.h"
@@ -48,6 +49,7 @@ void MainWindow::createTabs()
   m_applicationsPage = new ApplicationsPage(this);
   m_processesPage = new ProcessesPage(this);
   m_performancePage = new PerformancePage(this);
+  m_networkingPage = new NetworkingPage(this);
 
   m_tabs = new QTabWidget(this);
   m_tabs->setContentsMargins(12, 12, 12, 12);
@@ -55,7 +57,7 @@ void MainWindow::createTabs()
   m_tabs->addTab(m_processesPage, tr("Processes"));
   m_tabs->addTab(new ServicesPage(this), tr("Services"));
   m_tabs->addTab(m_performancePage, tr("Performance"));
-  m_tabs->addTab(new QWidget(this), tr("Networking"));
+  m_tabs->addTab(m_networkingPage, tr("Networking"));
   m_tabs->addTab(new QWidget(this), tr("Users"));
   setCentralWidget(m_tabs);
 
@@ -77,6 +79,15 @@ void MainWindow::createMenus()
   // These act on Switch To and on the notification area icon, neither of which exists yet.
   addToggle(optionsMenu, tr("&Minimize On Use"), false)->setEnabled(false);
   addToggle(optionsMenu, tr("&Hide When Minimized"), false)->setEnabled(false);
+  optionsMenu->addSeparator();
+
+  // The rest of the Options and View menus belongs to individual tabs.
+  QAction *tabAlwaysActive = addToggle(optionsMenu, tr("&Tab Always Active"), false);
+  connect(tabAlwaysActive, &QAction::toggled, this, [this](bool active) { m_networkingAlwaysActive = active; });
+  QAction *showScale = addToggle(optionsMenu, tr("Show &Scale"), true);
+  connect(showScale, &QAction::toggled, m_networkingPage, &NetworkingPage::setScaleVisible);
+  QAction *autoZoom = addToggle(optionsMenu, tr("Auto &Zoom"), true);
+  connect(autoZoom, &QAction::toggled, m_networkingPage, &NetworkingPage::setAutoZoom);
 
   QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
   viewMenu->addAction(tr("&Refresh Now"), QKeySequence(Qt::Key_F5), this, &MainWindow::refresh);
@@ -94,7 +105,6 @@ void MainWindow::createMenus()
   addSpeed(tr("&Paused"), 0);
   viewMenu->addSeparator();
 
-  // The rest of the View menu belongs to individual tabs.
   auto *iconSizeGroup = new QActionGroup(viewMenu);
   QAction *largeIcons = addToggle(viewMenu, tr("La&rge Icons"), false, iconSizeGroup);
   QAction *smallIcons = addToggle(viewMenu, tr("S&mall Icons"), false, iconSizeGroup);
@@ -113,11 +123,30 @@ void MainWindow::createMenus()
   QAction *kernelTimes = addToggle(viewMenu, tr("Show &Kernel Times"), false);
   connect(kernelTimes, &QAction::toggled, m_performancePage, &PerformancePage::setKernelTimesVisible);
 
-  m_tabViewActions = {{m_applicationsPage, {largeIcons, smallIcons, details}},
-                      {m_processesPage, {selectColumns}},
-                      {m_performancePage, {cpuHistoryMenu->menuAction(), kernelTimes}}};
-  connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::updateViewMenu);
-  updateViewMenu();
+  QMenu *adapterHistoryMenu = viewMenu->addMenu(tr("&Network Adapter History"));
+  const auto addHistory = [&](const QString &name, NetworkingPage::History history, bool shown)
+  {
+    QAction *action = addToggle(adapterHistoryMenu, name, shown);
+    connect(action, &QAction::toggled, m_networkingPage,
+            [this, history](bool visible) { m_networkingPage->setHistoryVisible(history, visible); });
+  };
+  addHistory(tr("Bytes &Sent"), NetworkingPage::History::BytesSent, false);
+  addHistory(tr("Bytes &Received"), NetworkingPage::History::BytesReceived, false);
+  addHistory(tr("Bytes &Total"), NetworkingPage::History::BytesTotal, true);
+  QAction *selectAdapterColumns = viewMenu->addAction(tr("&Select Columns..."));
+  selectAdapterColumns->setEnabled(false); // not implemented yet
+  QAction *cumulativeData = addToggle(viewMenu, tr("Show C&umulative Data"), false);
+  cumulativeData->setEnabled(false); // only affects the byte count columns, which don't exist yet
+  QAction *resetGraphs = viewMenu->addAction(tr("R&eset"), m_networkingPage, &NetworkingPage::reset);
+
+  m_tabActions = {{m_applicationsPage, {largeIcons, smallIcons, details}},
+                  {m_processesPage, {selectColumns}},
+                  {m_performancePage, {cpuHistoryMenu->menuAction(), kernelTimes}},
+                  {m_networkingPage,
+                   {tabAlwaysActive, showScale, autoZoom, adapterHistoryMenu->menuAction(), selectAdapterColumns,
+                    cumulativeData, resetGraphs}}};
+  connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::updateTabMenus);
+  updateTabMenus();
 
   QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
   helpMenu->addAction(tr("&View Help"))->setEnabled(false); // not implemented yet
@@ -125,9 +154,9 @@ void MainWindow::createMenus()
   helpMenu->addAction(tr("&About Task Manager"), this, &MainWindow::showAbout);
 }
 
-void MainWindow::updateViewMenu()
+void MainWindow::updateTabMenus()
 {
-  for (auto tab = m_tabViewActions.cbegin(); tab != m_tabViewActions.cend(); ++tab)
+  for (auto tab = m_tabActions.cbegin(); tab != m_tabActions.cend(); ++tab)
   {
     for (QAction *action : tab.value())
       action->setVisible(tab.key() == m_tabs->currentWidget());
@@ -162,6 +191,10 @@ void MainWindow::refresh()
 {
   m_usageJob.start(&readUsageSnapshot);
   refreshCurrentPage();
+
+  // Options > Tab Always Active keeps the network graphs going while another tab is shown.
+  if (m_networkingAlwaysActive && m_tabs->currentWidget() != m_networkingPage)
+    m_networkingPage->refresh();
 }
 
 void MainWindow::refreshCurrentPage()

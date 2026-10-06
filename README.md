@@ -30,9 +30,9 @@ sudo apt install cmake qt6-base-dev
 - Total CPU usage
 - Total process count
 - Performance tab in the Windows 7 style: CPU and memory meters and history graphs (total or per core, with kernel times), memory and system figures
+- Networking tab in the Windows 7 style: a utilization graph per network adapter (bytes sent, received and total) and the adapter list
 
 ### What is missing
-- Network tab contents as a whole
 - User tab contents as whole
 - Control buttons from all tabs
 - Menubar actions

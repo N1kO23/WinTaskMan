@@ -97,3 +97,37 @@ QList<ProcessInfo> ProcessUsageTracker::update(const ProcessSnapshot &snapshot)
   m_previousUptime = snapshot.uptimeSeconds;
   return processes;
 }
+
+QList<NetworkUsage> NetworkUsageTracker::update(const NetworkSnapshot &snapshot)
+{
+  const double elapsedSeconds = snapshot.uptimeSeconds - m_previousUptime;
+  QHash<QString, NetworkAdapter> adapters;
+
+  QList<NetworkUsage> usages;
+  for (const NetworkAdapter &adapter : snapshot.adapters)
+  {
+    adapters.insert(adapter.name, adapter);
+
+    NetworkUsage usage;
+    usage.name = adapter.name;
+    usage.connected = adapter.connected;
+    usage.linkSpeedMbps = adapter.linkSpeedMbps;
+
+    const auto previous = m_previousAdapters.constFind(adapter.name);
+    if (previous != m_previousAdapters.constEnd() && elapsedSeconds > 0.0 && adapter.linkSpeedMbps > 0)
+    {
+      // Bytes moved per second, as a percentage of the link's capacity in bytes per second.
+      const double capacity = adapter.linkSpeedMbps * 1e6 / 8 * elapsedSeconds;
+      const auto share = [capacity](quint64 now, quint64 before)
+      { return now > before ? qMin(100.0, 100.0 * double(now - before) / capacity) : 0.0; };
+      usage.sentPercent = share(adapter.bytesSent, previous->bytesSent);
+      usage.receivedPercent = share(adapter.bytesReceived, previous->bytesReceived);
+      usage.totalPercent = qMin(100.0, usage.sentPercent + usage.receivedPercent);
+    }
+    usages.append(usage);
+  }
+
+  m_previousAdapters = std::move(adapters);
+  m_previousUptime = snapshot.uptimeSeconds;
+  return usages;
+}

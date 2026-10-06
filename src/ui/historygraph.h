@@ -6,18 +6,37 @@
 #include <QWidget>
 
 // A scrolling usage history in the style of the Windows Task Manager: black plots with a green
-// grid that moves along with the data. Shows one plot per value passed to addSample().
+// grid that moves along with the data. Each plot draws one line per series, and the graph shows
+// as many plots as each sample has values per series.
 class HistoryGraph : public QWidget
 {
   Q_OBJECT
 
 public:
-  HistoryGraph(const QColor &lineColor, int lineWidth, QWidget *parent = nullptr);
+  struct Series
+  {
+    Series(const QColor &color, int lineWidth = 1, bool visible = true)
+        : color(color), lineWidth(lineWidth), visible(visible)
+    {
+    }
 
-  // Appends one percentage to each plot; the number of plots follows the number of values.
-  // `kernelValues` holds the kernel share of each value, drawn in red when kernel times are shown.
-  void addSample(const QList<double> &values, const QList<double> &kernelValues = {});
-  void setKernelTimesVisible(bool visible);
+    QColor color;
+    int lineWidth;
+    bool visible;
+  };
+
+  explicit HistoryGraph(QList<Series> series, QWidget *parent = nullptr);
+
+  // Appends a sample of percentages: values[series][plot].
+  void addSample(const QList<QList<double>> &values);
+  void clear();
+  void setSeriesVisible(int series, bool visible);
+
+  // Options of the Networking tab's graphs: a scale down the left-hand side, a vertical range
+  // that zooms in to fit the data, and taller grid cells.
+  void setScaleVisible(bool visible);
+  void setAutoZoom(bool autoZoom);
+  void setGridRowHeight(int pixels);
 
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
@@ -28,19 +47,18 @@ protected:
 private:
   static constexpr int kMaxSamples = 2048; // enough to fill a very wide plot
 
-  struct Plot
-  {
-    QContiguousCache<double> values = QContiguousCache<double>(kMaxSamples);
-    QContiguousCache<double> kernelValues = QContiguousCache<double>(kMaxSamples);
-  };
+  using History = QContiguousCache<double>;
 
   QList<QRect> plotRects() const;
-  void paintPlot(QPainter &painter, const QRect &rect, const Plot *plot) const;
-  void paintLine(QPainter &painter, const QRect &rect, const QContiguousCache<double> &values, const QPen &pen) const;
+  double rangeFor(const QList<History> *plot, int plotWidth) const;
+  void paintPlot(QPainter &painter, QRect rect, const QList<History> *plot) const;
+  void paintScale(QPainter &painter, const QRect &strip, double range) const;
+  void paintLine(QPainter &painter, const QRect &rect, const History &values, double range, const QPen &pen) const;
 
-  QColor m_lineColor;
-  int m_lineWidth;
-  bool m_kernelTimesVisible = false;
-  QList<Plot> m_plots;
+  QList<Series> m_series;
+  QList<QList<History>> m_plots; // [plot][series]
+  bool m_scaleVisible = false;
+  bool m_autoZoom = false;
+  int m_gridRowHeight = 12;
   quint64 m_sampleCount = 0; // drives the grid scrolling
 };
